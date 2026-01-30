@@ -1,6 +1,6 @@
 # MCP Feedback Enhanced Server
 
-**Version: 1.0.0**
+**Version: 1.0.2**
 
 MCP Server component that connects to the VSCode Extension's WebSocket server to collect user feedback.
 

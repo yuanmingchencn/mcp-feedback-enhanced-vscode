@@ -2,7 +2,7 @@
   "name": "mcp-feedback-enhanced-vscode",
   "displayName": "MCP Feedback Enhanced",
   "description": "Interactive feedback collection for AI assistants - integrates with Cursor/VSCode chat",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "publisher": "yuanmingchencn",
   "license": "MIT",
   "repository": {

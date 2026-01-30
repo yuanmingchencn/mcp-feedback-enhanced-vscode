@@ -1,6 +1,6 @@
 # MCP Feedback Enhanced - VSCode/Cursor Extension
 
-**Version: 1.0.0**
+**Version: 1.0.2**
 
 A native VSCode/Cursor sidebar extension for collecting interactive feedback from AI assistants through the Model Context Protocol (MCP).
 
