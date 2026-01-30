@@ -1,0 +1,40 @@
+# Ignore everything by default
+**
+
+# Include only essential files
+!package.json
+!README.md
+!LICENSE
+!resources/**
+!out/extension.js
+!out/webview/panel.html
+
+# MCP Server - only dist/index.js (no node_modules, dependencies are bundled)
+!mcp-server/dist/index.js
+!mcp-server/package.json
+!mcp-server/README.md
+
+# Exclude all source and dev files explicitly
+.vscode/**
+.vscode-test/**
+.cursor/**
+src/**
+scripts/**
+docs/**
+node_modules/**
+mcp-server/node_modules/**
+mcp-server/src/**
+
+# Exclude dev/config files
+.git/**
+.gitignore
+.cursorrules
+.cursorignore
+*.ts
+*.map
+*.d.ts
+tsconfig.json
+DEV_WORKFLOW.md
+*.vsix
+*.wav
+*.bak

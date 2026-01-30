@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+mcp-server/node_modules/
+
+# Build output
+out/
+mcp-server/dist/
+
+# Package files
+*.vsix
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Test coverage
+coverage/
+
+# Backup files
+*.bak
+
+# Test files
+*.wav
+*.wav
+.cursor/

@@ -1,0 +1,18 @@
+# MCP Feedback Enhanced - Development Rules
+
+## Code Style
+- All code and comments must be in English
+- Use TypeScript for extension code
+- Use ESBuild for bundling
+- Run `npm run compile` after modifications
+
+## Architecture
+- Extension acts as WebSocket server hub
+- MCP server connects as client
+- Webview connects as client
+- State persists in extension process (wsServer.ts)
+
+## Development Workflow
+- Edit `scripts/generate-webview.js` for UI changes
+- Run `npm run dev` for hot-reload during development
+- See DEV_WORKFLOW.md for detailed architecture

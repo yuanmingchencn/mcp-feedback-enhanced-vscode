@@ -1,0 +1,147 @@
+{
+  "name": "mcp-feedback-enhanced-vscode",
+  "displayName": "MCP Feedback Enhanced",
+  "description": "Interactive feedback collection for AI assistants - integrates with Cursor/VSCode chat",
+  "version": "1.0.1",
+  "publisher": "yuanmingchencn",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode"
+  },
+  "homepage": "https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode#readme",
+  "bugs": {
+    "url": "https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode/issues"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other",
+    "Machine Learning"
+  ],
+  "keywords": [
+    "mcp",
+    "feedback",
+    "ai",
+    "cursor",
+    "copilot"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "mcp-feedback",
+          "title": "MCP Feedback",
+          "icon": "resources/icon.svg"
+        }
+      ],
+      "panel": [
+        {
+          "id": "mcp-feedback-bottom",
+          "title": "MCP Feedback",
+          "icon": "resources/icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "mcp-feedback": [
+        {
+          "type": "webview",
+          "id": "mcp-feedback.feedbackPanel",
+          "name": "Feedback",
+          "visibility": "visible"
+        }
+      ],
+      "mcp-feedback-bottom": [
+        {
+          "type": "webview",
+          "id": "mcp-feedback.feedbackPanelBottom",
+          "name": "MCP Feedback",
+          "visibility": "visible"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "mcp-feedback.openPanel",
+        "title": "MCP Feedback: Open in Sidebar (Left)",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "mcp-feedback.openInEditor",
+        "title": "MCP Feedback: Open in Editor (Tab)",
+        "icon": "$(window)"
+      },
+      {
+        "command": "mcp-feedback.openInBottom",
+        "title": "MCP Feedback: Open in Bottom Panel",
+        "icon": "$(panel)"
+      },
+      {
+        "command": "mcp-feedback.reconnect",
+        "title": "MCP Feedback: Reconnect to Server"
+      },
+      {
+        "command": "mcp-feedback.focusInput",
+        "title": "MCP Feedback: Focus Input Field"
+      },
+      {
+        "command": "mcp-feedback.forceReset",
+        "title": "MCP Feedback: Force Reset (Restart Server)"
+      },
+      {
+        "command": "mcp-feedback.showStatus",
+        "title": "MCP Feedback: Show Status"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "mcp-feedback.openPanel",
+        "key": "ctrl+shift+m",
+        "mac": "cmd+shift+m"
+      },
+      {
+        "command": "mcp-feedback.focusInput",
+        "key": "ctrl+shift+f",
+        "mac": "cmd+shift+f"
+      }
+    ]
+  },
+  "scripts": {
+    "vscode:prepublish": "node scripts/generate-webview.js --prod && npm run esbuild-base -- --minify && npm run verify",
+    "compile": "tsc -p ./ && node scripts/generate-webview.js && npm run esbuild && npm run verify",
+    "verify": "node -e \"const h=require('fs').readFileSync('out/webview/panel.html','utf8');const e=require('fs').readFileSync('out/extension.js','utf8');const checks=[];if(!h.includes('{{SERVER_URL}}'))checks.push('Missing SERVER_URL placeholder');if(!e.includes('retainContextWhenHidden:!1')&&!e.includes('retainContextWhenHidden: false'))checks.push('retainContextWhenHidden should be false');if(!e.includes('_loadWebviewHtml'))checks.push('Missing _loadWebviewHtml');if(checks.length){console.error('ERRORS:',checks.join(', '));process.exit(1)}console.log('Verify OK')\"",
+    "dev": "node scripts/watch-reload.js",
+    "rollback:list": "node scripts/rollback.js list",
+    "rollback:save": "node scripts/rollback.js save",
+    "rollback:restore": "node scripts/rollback.js restore",
+    "esbuild-base": "esbuild ./src/extension.ts --bundle --outfile=out/extension.js --external:vscode --format=cjs --platform=node",
+    "esbuild": "npm run esbuild-base -- --sourcemap",
+    "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.6.2",
+    "ws": "^8.19.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@types/ws": "^8.5.10",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "@vscode/vsce": "^2.22.0",
+    "esbuild": "^0.27.2",
+    "eslint": "^8.54.0",
+    "typescript": "^5.3.0"
+  }
+}
