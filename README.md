@@ -43,7 +43,7 @@ A native VSCode/Cursor sidebar extension for collecting interactive feedback fro
 Search for "MCP Feedback Enhanced" in the Extensions marketplace, or install via command line:
 
 ```bash
-cursor --install-extension yuanmingchencn.mcp-feedback-enhanced-vscode
+cursor --install-extension mcp-feedback.mcp-feedback-enhanced-vscode
 ```
 
 ### From VSIX File
