@@ -688,6 +688,7 @@ function getScript() {
     });
     
     // Update pending UI
+    // Update pending UI
     function updatePendingUI() {
         if (pendingComment) {
             pendingSection.style.display = 'block';
@@ -696,6 +697,12 @@ function getScript() {
             pendingSection.style.display = 'none';
             pendingText.textContent = '';
         }
+        
+        // Sync to extension host (for MCP Resource)
+        vscode.postMessage({
+            type: 'pending-update',
+            value: pendingComment || ''
+        });
     }
     
 

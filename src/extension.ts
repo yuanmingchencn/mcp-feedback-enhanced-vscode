@@ -15,7 +15,7 @@ import { FeedbackWebSocketServer } from './wsServer';
  */
 function loadWebviewHtml(extensionPath: string, serverUrl: string, workspacePath: string, sessionId: string): string {
     const htmlPath = path.join(extensionPath, 'out', 'webview', 'panel.html');
-    
+
     try {
         let html = fs.readFileSync(htmlPath, 'utf-8');
         html = html.replace(/\{\{SERVER_URL\}\}/g, serverUrl);
@@ -40,16 +40,16 @@ export async function activate(context: vscode.ExtensionContext) {
     wsServer = new FeedbackWebSocketServer((status) => {
         console.log(`[MCP Feedback] WS Server status: ${status}`);
     });
-    
+
     let serverPort: number;
     try {
         serverPort = await wsServer.start();
         console.log(`[MCP Feedback] WebSocket Server started on port ${serverPort}`);
-        
+
         // Set workspace paths for MCP Server matching
         const workspaces = vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [];
         wsServer.setWorkspaces(workspaces);
-        
+
         // Update workspaces when folders change
         context.subscriptions.push(
             vscode.workspace.onDidChangeWorkspaceFolders(() => {
@@ -66,7 +66,7 @@ export async function activate(context: vscode.ExtensionContext) {
     // Create and register the feedback view provider (sidebar)
     // Pass the server port so webview knows where to connect
     feedbackViewProvider = new FeedbackViewProvider(context.extensionUri, context, undefined, serverPort);
-    
+
     // Set up force reset callback
     feedbackViewProvider.onForceReset(async () => {
         if (wsServer) {
@@ -77,7 +77,18 @@ export async function activate(context: vscode.ExtensionContext) {
             return newPort;
         }
     });
-    
+
+    // Wire up pending updates to WebSocket server
+    feedbackViewProvider.onPendingUpdate((value) => {
+        if (wsServer) {
+            // Use current workspace as key
+            const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+            if (workspacePath) {
+                wsServer.updatePendingComment(workspacePath, value);
+            }
+        }
+    });
+
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             FeedbackViewProvider.viewType,
@@ -92,7 +103,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Register bottom panel provider
     feedbackBottomProvider = new FeedbackViewProvider(context.extensionUri, context, 'mcp-feedback.feedbackPanelBottom', serverPort);
-    
+
     // Set up force reset callback for bottom panel too
     feedbackBottomProvider.onForceReset(async () => {
         if (wsServer) {
@@ -102,7 +113,7 @@ export async function activate(context: vscode.ExtensionContext) {
             return newPort;
         }
     });
-    
+
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(
             'mcp-feedback.feedbackPanelBottom',
@@ -159,12 +170,12 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.commands.registerCommand('mcp-feedback.forceReset', async () => {
             vscode.window.showInformationMessage('MCP Feedback: Force resetting...');
-            
+
             try {
                 if (wsServer) {
                     const newPort = await wsServer.restart();
                     console.log(`[MCP Feedback] Server restarted on port ${newPort}`);
-                    
+
                     // Notify all webviews to reconnect
                     if (feedbackViewProvider) {
                         feedbackViewProvider.reconnect();
@@ -175,7 +186,7 @@ export async function activate(context: vscode.ExtensionContext) {
                     if (editorPanel) {
                         editorPanel.webview.postMessage({ type: 'reconnect' });
                     }
-                    
+
                     vscode.window.showInformationMessage(`MCP Feedback: Reset complete! Server on port ${newPort}`);
                 }
             } catch (e) {
@@ -196,7 +207,7 @@ export async function activate(context: vscode.ExtensionContext) {
 - Connected clients: ${status.clients.length}
   ${status.clients.map(c => `  - ${c.type}: ${c.projectPath || 'no project'}`).join('\n')}
 - Pending feedback: ${status.pendingFeedback}`;
-                
+
                 vscode.window.showInformationMessage(msg, { modal: true });
             } else {
                 vscode.window.showWarningMessage('MCP Feedback: Server not initialized');
@@ -276,23 +287,23 @@ function openFeedbackInEditor(context: vscode.ExtensionContext) {
 
 export function deactivate() {
     console.log('MCP Feedback Enhanced extension deactivating...');
-    
+
     // Dispose providers
     feedbackViewProvider?.dispose();
     feedbackBottomProvider?.dispose();
     feedbackViewProvider = undefined;
     feedbackBottomProvider = undefined;
-    
+
     // Stop WebSocket Server
     if (wsServer) {
         wsServer.stop();
         wsServer = undefined;
     }
-    
+
     // Clean up editor panel
     editorPanel?.dispose();
     editorPanel = undefined;
-    
+
     console.log('MCP Feedback Enhanced extension deactivated');
 }
 

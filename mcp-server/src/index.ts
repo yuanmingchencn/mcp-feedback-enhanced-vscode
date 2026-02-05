@@ -55,8 +55,8 @@ function debug(message: string) {
 // State
 let ws: WebSocket | null = null;
 let isConnected = false;
-let pendingFeedbackResolvers: Map<string, { 
-    resolve: (result: any) => void; 
+let pendingFeedbackResolvers: Map<string, {
+    resolve: (result: any) => void;
     reject: (error: any) => void;
     timeout: NodeJS.Timeout;
 }> = new Map();
@@ -68,31 +68,31 @@ function checkPortConnectivity(port: number): Promise<boolean> {
     return new Promise((resolve) => {
         const socket = new net.Socket();
         let resolved = false;
-        
+
         const cleanup = () => {
             if (!resolved) {
                 resolved = true;
                 socket.destroy();
             }
         };
-        
+
         socket.setTimeout(PORT_CHECK_TIMEOUT_MS);
-        
+
         socket.on('connect', () => {
             cleanup();
             resolve(true);
         });
-        
+
         socket.on('error', () => {
             cleanup();
             resolve(false);
         });
-        
+
         socket.on('timeout', () => {
             cleanup();
             resolve(false);
         });
-        
+
         socket.connect(port, '127.0.0.1');
     });
 }
@@ -106,10 +106,10 @@ async function getLiveServersAsync(): Promise<ServerInfo[]> {
             debug('Servers directory not found');
             return [];
         }
-        
+
         const files = fs.readdirSync(SERVERS_DIR);
         const servers: ServerInfo[] = [];
-        
+
         for (const file of files) {
             if (!file.endsWith('.json')) continue;
             try {
@@ -117,7 +117,7 @@ async function getLiveServersAsync(): Promise<ServerInfo[]> {
                 // Verify process is still alive
                 try {
                     process.kill(data.pid, 0);
-                    
+
                     // Also check if port is actually responding (fixes stale port bug)
                     const portOk = await checkPortConnectivity(data.port);
                     if (portOk) {
@@ -140,7 +140,7 @@ async function getLiveServersAsync(): Promise<ServerInfo[]> {
                 // Skip invalid files
             }
         }
-        
+
         return servers;
     } catch (e) {
         debug(`Error reading servers: ${e}`);
@@ -157,10 +157,10 @@ function getLiveServers(): ServerInfo[] {
             debug('Servers directory not found');
             return [];
         }
-        
+
         const files = fs.readdirSync(SERVERS_DIR);
         const servers: ServerInfo[] = [];
-        
+
         for (const file of files) {
             if (!file.endsWith('.json')) continue;
             try {
@@ -180,7 +180,7 @@ function getLiveServers(): ServerInfo[] {
                 // Skip invalid files
             }
         }
-        
+
         return servers;
     } catch (e) {
         debug(`Error reading servers: ${e}`);
@@ -197,15 +197,15 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
     const servers = await getLiveServersAsync();
     debug(`Looking for Extension for project: ${projectPath}`);
     debug(`Found ${servers.length} live Extension server(s) with valid ports`);
-    
+
     if (servers.length === 0) {
         return null;
     }
-    
+
     // Get MCP server's CURSOR_TRACE_ID (if running in Cursor)
     const myTraceId = process.env['CURSOR_TRACE_ID'] || '';
     debug(`My CURSOR_TRACE_ID: ${myTraceId || '(not set)'}`);
-    
+
     // Strategy 0: CURSOR_TRACE_ID match (HIGHEST PRIORITY - same Cursor window)
     if (myTraceId) {
         const traceMatch = servers.find(s => s.cursorTraceId === myTraceId);
@@ -214,7 +214,7 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
             return traceMatch;
         }
     }
-    
+
     // Strategy 1: Exact workspace match + traceId filter if available
     const workspaceMatches = servers.filter(s => s.workspaces?.includes(projectPath));
     if (workspaceMatches.length === 1) {
@@ -227,7 +227,7 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
         debug(`✓ Exact workspace match (multiple, taking most recent): port=${sorted[0].port}`);
         return sorted[0];
     }
-    
+
     // Strategy 2: Prefix match (project is inside a workspace)
     for (const server of servers) {
         for (const ws of server.workspaces || []) {
@@ -237,7 +237,7 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
             }
         }
     }
-    
+
     // Strategy 3: parentPid match (backward compatibility)
     const myParentPid = process.ppid;
     const parentMatch = servers.find(s => s.parentPid === myParentPid);
@@ -245,13 +245,13 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
         debug(`✓ parentPid match: port=${parentMatch.port}`);
         return parentMatch;
     }
-    
+
     // Strategy 4: Single server fallback
     if (servers.length === 1) {
         debug(`✓ Single server fallback: port=${servers[0].port}`);
         return servers[0];
     }
-    
+
     // Strategy 5: Most recent server
     const sorted = servers.sort((a, b) => b.timestamp - a.timestamp);
     debug(`✓ Using most recent server: port=${sorted[0].port}`);
@@ -259,7 +259,7 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
     sorted.forEach(s => {
         debug(`    - pid=${s.pid}, port=${s.port}, traceId=${s.cursorTraceId}, workspaces=${s.workspaces?.join(', ')}`);
     });
-    
+
     return sorted[0];
 }
 
@@ -269,20 +269,20 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
 function findExtensionForProject(projectPath: string): ServerInfo | null {
     const servers = getLiveServers();
     if (servers.length === 0) return null;
-    
+
     // Strategy 0: CURSOR_TRACE_ID match (highest priority)
     const myTraceId = process.env['CURSOR_TRACE_ID'] || '';
     if (myTraceId) {
         const traceMatch = servers.find(s => s.cursorTraceId === myTraceId);
         if (traceMatch) return traceMatch;
     }
-    
+
     // Strategy 1: Exact workspace match
     const workspaceMatches = servers.filter(s => s.workspaces?.includes(projectPath));
     if (workspaceMatches.length >= 1) {
         return workspaceMatches.sort((a, b) => b.timestamp - a.timestamp)[0];
     }
-    
+
     // Strategy 2: Prefix match
     for (const server of servers) {
         for (const ws of server.workspaces || []) {
@@ -291,11 +291,11 @@ function findExtensionForProject(projectPath: string): ServerInfo | null {
             }
         }
     }
-    
+
     // Strategy 3: parentPid match
     const parentMatch = servers.find(s => s.parentPid === process.ppid);
     if (parentMatch) return parentMatch;
-    
+
     // Fallbacks
     if (servers.length === 1) return servers[0];
     return servers.sort((a, b) => b.timestamp - a.timestamp)[0];
@@ -311,7 +311,7 @@ let lastProjectPath: string = '';
  */
 async function connectToExtensionWithRetry(projectPath: string, maxRetries: number = MAX_RECONNECT_ATTEMPTS): Promise<void> {
     let lastError: Error | null = null;
-    
+
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
             await connectToExtension(projectPath);
@@ -319,7 +319,7 @@ async function connectToExtensionWithRetry(projectPath: string, maxRetries: numb
         } catch (err: any) {
             lastError = err;
             debug(`Connection attempt ${attempt}/${maxRetries} failed: ${err.message}`);
-            
+
             if (attempt < maxRetries) {
                 // Wait before retry with exponential backoff
                 const delay = RECONNECT_DELAY_MS * attempt;
@@ -328,7 +328,7 @@ async function connectToExtensionWithRetry(projectPath: string, maxRetries: numb
             }
         }
     }
-    
+
     throw lastError || new Error('Connection failed after retries');
 }
 
@@ -338,24 +338,24 @@ async function connectToExtensionWithRetry(projectPath: string, maxRetries: numb
 async function connectToExtension(projectPath: string): Promise<void> {
     // Use async version to check port connectivity
     const server = await findExtensionForProjectAsync(projectPath);
-    
+
     if (!server) {
         throw new Error(`No MCP Feedback Extension found for project: ${projectPath}. Please ensure the extension is installed and a Cursor window is open with this project.`);
     }
-    
+
     const url = `ws://127.0.0.1:${server.port}/ws`;
-    
+
     debug(`Connecting to Extension at ${url} for project ${projectPath}`);
-    
+
     return new Promise((resolve, reject) => {
         ws = new WebSocket(url);
-        
+
         ws.on('open', () => {
             debug('Connected to Extension WebSocket Server');
             isConnected = true;
             connectedPort = server.port;
             lastProjectPath = projectPath;
-            
+
             // Register as MCP Server
             ws?.send(JSON.stringify({
                 type: 'register',
@@ -363,10 +363,10 @@ async function connectToExtension(projectPath: string): Promise<void> {
                 pid: process.pid,
                 parentPid: process.ppid
             }));
-            
+
             resolve();
         });
-        
+
         ws.on('message', (data) => {
             try {
                 const message = JSON.parse(data.toString());
@@ -375,28 +375,28 @@ async function connectToExtension(projectPath: string): Promise<void> {
                 debug(`Parse error: ${e}`);
             }
         });
-        
+
         ws.on('close', () => {
             debug('Disconnected from Extension');
             const wasConnected = isConnected;
             isConnected = false;
             connectedPort = null;
             ws = null;
-            
+
             // Only reject pending if we were previously connected (unexpected disconnect)
             if (wasConnected && pendingFeedbackResolvers.size > 0) {
                 debug(`Connection lost with ${pendingFeedbackResolvers.size} pending requests`);
                 // Don't reject immediately - the next feedback request will trigger reconnect
             }
         });
-        
+
         ws.on('error', (err) => {
             debug(`WebSocket error: ${err.message}`);
             if (!isConnected) {
                 reject(err);
             }
         });
-        
+
         // Timeout for initial connection
         setTimeout(() => {
             if (!isConnected) {
@@ -417,12 +417,12 @@ async function ensureConnectedForProject(projectPath: string): Promise<void> {
     if (!server) {
         throw new Error(`No MCP Feedback Extension found for project: ${projectPath}. Please open the project in Cursor with the MCP Feedback extension installed.`);
     }
-    
+
     // If already connected to the right server and connection is open, reuse
     if (isConnected && ws?.readyState === WebSocket.OPEN && connectedPort === server.port) {
         return;
     }
-    
+
     // Close existing connection if any
     if (ws) {
         debug('Closing existing connection for reconnect');
@@ -431,7 +431,7 @@ async function ensureConnectedForProject(projectPath: string): Promise<void> {
         isConnected = false;
         connectedPort = null;
     }
-    
+
     // Connect with retry logic
     await connectToExtensionWithRetry(projectPath);
 }
@@ -441,12 +441,12 @@ async function ensureConnectedForProject(projectPath: string): Promise<void> {
  */
 function handleMessage(message: any) {
     debug(`Received: ${message.type}`);
-    
+
     switch (message.type) {
         case 'connection_established':
             debug(`Connected to Extension v${message.version}`);
             break;
-            
+
         case 'feedback_result':
             // User submitted feedback
             const resolver = pendingFeedbackResolvers.get(message.session_id);
@@ -459,7 +459,7 @@ function handleMessage(message: any) {
                 pendingFeedbackResolvers.delete(message.session_id);
             }
             break;
-            
+
         case 'feedback_error':
             // Error getting feedback
             const errorResolver = pendingFeedbackResolvers.get(message.session_id);
@@ -469,9 +469,19 @@ function handleMessage(message: any) {
                 pendingFeedbackResolvers.delete(message.session_id);
             }
             break;
-            
+
         case 'pong':
             // Heartbeat response
+            break;
+
+        case 'pending_comment_result':
+            // Result for get_pending_comment
+            const pendingResolver = pendingFeedbackResolvers.get(message.request_id);
+            if (pendingResolver) {
+                clearTimeout(pendingResolver.timeout);
+                pendingResolver.resolve(message.comment || '');
+                pendingFeedbackResolvers.delete(message.request_id);
+            }
             break;
     }
 }
@@ -486,7 +496,7 @@ async function requestFeedback(
     timeout: number,
     agentName?: string
 ): Promise<{ feedback: string; images: Array<{ name?: string; data: string }> }> {
-    
+
     // Try to connect to extension first
     try {
         await ensureConnectedForProject(projectDirectory);
@@ -495,23 +505,23 @@ async function requestFeedback(
         debug(`Extension not available, falling back to browser: ${(e as Error).message}`);
         return requestFeedbackViaBrowser(projectDirectory, summary, timeout);
     }
-    
+
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
-    
+
     return new Promise((resolve, reject) => {
         // Set timeout
         const timeoutHandle = setTimeout(() => {
             pendingFeedbackResolvers.delete(sessionId);
             reject(new Error(`Feedback timeout after ${timeout} seconds`));
         }, timeout * 1000);
-        
+
         // Store resolver
         pendingFeedbackResolvers.set(sessionId, {
             resolve,
             reject,
             timeout: timeoutHandle
         });
-        
+
         // Send request to Extension
         ws?.send(JSON.stringify({
             type: 'feedback_request',
@@ -521,8 +531,53 @@ async function requestFeedback(
             timeout,
             agent_name: agentName  // For multi-agent display
         }));
-        
+
         debug(`Feedback request sent: session=${sessionId}, agent=${agentName || 'default'}`);
+    });
+}
+
+// ============================================================================
+// Pending Comment Resource Logic
+// ============================================================================
+
+/**
+ * Get pending comment from Extension
+ */
+async function getPendingComment(projectDirectory: string): Promise<string> {
+    try {
+        await ensureConnectedForProject(projectDirectory);
+    } catch (e) {
+        debug(`Extension not available for pending comment: ${(e as Error).message}`);
+        return '';
+    }
+
+    // Generate request ID
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+    return new Promise((resolve) => {
+        // Set timeout - resolve empty if timeout
+        const timeoutHandle = setTimeout(() => {
+            const resolver = pendingFeedbackResolvers.get(requestId);
+            if (resolver) {
+                pendingFeedbackResolvers.delete(requestId);
+                debug(`Pending comment timeout: ${requestId}`);
+                resolve('');
+            }
+        }, 1000); // 1s timeout for resource read is enough
+
+        // Store resolver
+        pendingFeedbackResolvers.set(requestId, {
+            resolve: (result) => resolve(result),
+            reject: () => resolve(''), // Should not happen for this type
+            timeout: timeoutHandle
+        });
+
+        // Send request
+        ws?.send(JSON.stringify({
+            type: 'get_pending_comment',
+            request_id: requestId,
+            project_directory: projectDirectory
+        }));
     });
 }
 
@@ -536,7 +591,7 @@ async function requestFeedback(
 function openBrowser(url: string): void {
     const platform = os.platform();
     let cmd: string;
-    
+
     if (platform === 'darwin') {
         cmd = `open "${url}"`;
     } else if (platform === 'win32') {
@@ -544,7 +599,7 @@ function openBrowser(url: string): void {
     } else {
         cmd = `xdg-open "${url}"`;
     }
-    
+
     exec(cmd, (error) => {
         if (error) {
             debug(`Failed to open browser: ${error.message}`);
@@ -562,7 +617,7 @@ function generateBrowserHtml(summary: string, port: number): string {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/\n/g, '<br>');
-    
+
     return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -765,19 +820,19 @@ async function requestFeedbackViaBrowser(
     return new Promise((resolve, reject) => {
         // Find available port
         const server = http.createServer();
-        
+
         server.listen(0, '127.0.0.1', () => {
             const address = server.address();
             if (!address || typeof address === 'string') {
                 reject(new Error('Failed to start HTTP server'));
                 return;
             }
-            
+
             const port = address.port;
             debug(`Browser feedback server started on port ${port}`);
-            
+
             let feedbackReceived = false;
-            
+
             // Handle requests
             server.on('request', (req, res) => {
                 if (req.method === 'GET' && req.url === '/') {
@@ -792,10 +847,10 @@ async function requestFeedbackViaBrowser(
                         try {
                             const data = JSON.parse(body);
                             feedbackReceived = true;
-                            
+
                             res.writeHead(200, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({ success: true }));
-                            
+
                             // Close server and resolve
                             setTimeout(() => {
                                 server.close();
@@ -814,12 +869,12 @@ async function requestFeedbackViaBrowser(
                     res.end('Not found');
                 }
             });
-            
+
             // Open browser
             const url = `http://127.0.0.1:${port}`;
             debug(`Opening browser: ${url}`);
             openBrowser(url);
-            
+
             // Timeout
             const timeoutHandle = setTimeout(() => {
                 if (!feedbackReceived) {
@@ -827,12 +882,12 @@ async function requestFeedbackViaBrowser(
                     reject(new Error(`Browser feedback timeout after ${timeout} seconds`));
                 }
             }, timeout * 1000);
-            
+
             server.on('close', () => {
                 clearTimeout(timeoutHandle);
             });
         });
-        
+
         server.on('error', (err) => {
             reject(new Error(`Failed to start browser feedback server: ${err.message}`));
         });
@@ -860,13 +915,13 @@ server.tool(
     },
     async ({ project_directory, summary, timeout, agent_name }) => {
         debug(`interactive_feedback called: project=${project_directory}, agent=${agent_name || 'default'}`);
-        
+
         try {
             const result = await requestFeedback(project_directory, summary, timeout || 600, agent_name);
-            
+
             // Build content array with text and images
             const content: any[] = [{ type: 'text', text: `User Feedback:\n${result.feedback}` }];
-            
+
             // Add images as MCP image content items
             if (result.images && result.images.length > 0) {
                 debug(`Processing ${result.images.length} image(s)`);
@@ -882,7 +937,7 @@ server.tool(
                     }
                 }
             }
-            
+
             return { content };
         } catch (error: any) {
             debug(`Feedback error: ${error.message}`);
@@ -910,10 +965,41 @@ server.tool(
             parentPid: process.ppid,
             extensionConnected: isConnected
         };
-        
+
         return {
             content: [{ type: 'text', text: JSON.stringify(info, null, 2) }]
         };
+    }
+);
+
+// Register pending comment resource
+server.resource(
+    'pending',
+    'feedback://pending',
+    async (uri) => {
+        // Determine project directory (use CWD as approximation)
+        const projectDir = process.cwd();
+        debug(`Reading resource feedback://pending for project: ${projectDir}`);
+
+        try {
+            const comment = await getPendingComment(projectDir);
+            return {
+                contents: [{
+                    uri: uri.href,
+                    mimeType: 'text/plain',
+                    text: comment || 'No pending comment.'
+                }]
+            };
+        } catch (e) {
+            return {
+                contents: [{
+                    uri: uri.href,
+                    mimeType: 'text/plain',
+                    text: `Error fetching pending comment: ${(e as Error).message}`
+                }],
+                isError: true // isError might not be in ReadResourceResult type definition for some SDKs, but often supported
+            };
+        }
     }
 );
 
@@ -925,14 +1011,14 @@ async function main() {
     debug('MCP Feedback Server starting...');
     debug(`PID: ${process.pid}, Parent PID: ${process.ppid}`);
     debug(`Version: ${VERSION}`);
-    
+
     // Log environment for debugging
     if (DEBUG) {
         console.error('[MCP Feedback] Environment:');
-        Object.keys(process.env).filter(k => 
+        Object.keys(process.env).filter(k =>
             k.includes('CURSOR') || k.includes('VSCODE') || k.includes('MCP')
         ).forEach(k => console.error(`  ${k}=${process.env[k]}`));
-        
+
         // Show available servers
         const servers = getLiveServers();
         console.error(`[MCP Feedback] Available servers: ${servers.length}`);
@@ -940,16 +1026,16 @@ async function main() {
             console.error(`  - port=${s.port}, workspaces=${s.workspaces?.join(', ')}`);
         });
     }
-    
+
     // Don't connect at startup - we'll connect on demand when interactive_feedback is called
     // This allows us to use project_directory for server matching
-    
+
     // Start MCP server on stdio
     const transport = new StdioServerTransport();
     await server.connect(transport);
-    
+
     debug('MCP Server running on stdio, will connect to Extension on first feedback request');
-    
+
     // Heartbeat to keep connection alive
     setInterval(() => {
         if (ws?.readyState === WebSocket.OPEN) {

@@ -19,6 +19,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
     private _serverPort: number;
     private _disposables: vscode.Disposable[] = [];
     private _onForceReset: (() => Promise<number | void>) | null = null;
+    private _onPendingUpdate: ((value: string) => void) | null = null;
 
     private _fileWatcher: fs.FSWatcher | null = null;
 
@@ -27,9 +28,16 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
         this._context = context;
         this._viewType = viewType || FeedbackViewProvider.viewType;
         this._serverPort = serverPort;
-        
+
         this._watchWorkspaceChanges();
         this._watchWebviewFile();
+    }
+
+    /**
+     * Set callback for pending comment updates
+     */
+    onPendingUpdate(callback: (value: string) => void): void {
+        this._onPendingUpdate = callback;
     }
 
     /**
@@ -67,15 +75,15 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
      */
     private _loadWebviewHtml(serverUrl: string, workspacePath: string, sessionId: string): string {
         const htmlPath = this._getWebviewHtmlPath();
-        
+
         try {
             let html = fs.readFileSync(htmlPath, 'utf-8');
-            
+
             // Replace placeholders
             html = html.replace(/\{\{SERVER_URL\}\}/g, serverUrl);
             html = html.replace(/\{\{PROJECT_PATH\}\}/g, workspacePath);
             html = html.replace(/\{\{SESSION_ID\}\}/g, sessionId);
-            
+
             return html;
         } catch (e) {
             console.error('[MCP Feedback] Failed to load HTML:', e);
@@ -117,20 +125,20 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
      */
     private _recreateWebview(): void {
         if (!this._view) return;
-        
+
         const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
         const serverUrl = `ws://127.0.0.1:${this._serverPort}/ws`;
         const sessionId = vscode.env.sessionId;
-        
+
         console.log(`[MCP Feedback] Recreating webview: workspace=${workspaceDir}, port=${this._serverPort}`);
-        
+
         this._view.webview.html = this._loadWebviewHtml(serverUrl, workspaceDir, sessionId);
     }
 
     public dispose(): void {
         this._disposables.forEach(d => d.dispose());
         this._disposables = [];
-        
+
         if (this._fileWatcher) {
             this._fileWatcher.close();
             this._fileWatcher = null;
@@ -153,7 +161,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
         const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd();
         const serverUrl = `ws://127.0.0.1:${this._serverPort}/ws`;
         const sessionId = vscode.env.sessionId;
-        
+
         console.log(`[MCP Feedback] Webview connecting to ${serverUrl}`);
 
         webviewView.webview.html = this._loadWebviewHtml(serverUrl, workspaceDir, sessionId);
@@ -197,7 +205,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                 // Update status bar or other UI elements
                 console.log(`Connection status: ${message.status}`);
                 break;
-            
+
             case 'reload-webview':
                 console.log('[MCP Feedback] Reload webview requested');
                 this._recreateWebview();
@@ -239,6 +247,13 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                 vscode.commands.executeCommand('mcp-feedback.openInEditor');
                 break;
 
+            case 'pending-update':
+                // Sync pending comment to extension host
+                if (this._onPendingUpdate) {
+                    this._onPendingUpdate(message.value);
+                }
+                break;
+
             case 'suggest-expand':
                 // Multiple pending requests - suggest opening in larger panel
                 vscode.window.showInformationMessage(
@@ -276,7 +291,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
             // Sidebar uses workbench.view.extension.*
             vscode.commands.executeCommand('workbench.view.extension.mcp-feedback');
         }
-        
+
         // Show the view
         if (this._view) {
             this._view.show(true); // preserveFocus = true initially

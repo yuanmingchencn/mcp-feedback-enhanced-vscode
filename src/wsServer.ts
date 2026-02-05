@@ -74,7 +74,7 @@ export class FeedbackWebSocketServer {
     private static readonly HEARTBEAT_TIMEOUT = 45000;   // 45 seconds - 3 missed heartbeats
 
     constructor(onStatusChange?: (status: string) => void) {
-        this._onStatusChange = onStatusChange || (() => {});
+        this._onStatusChange = onStatusChange || (() => { });
         this._ensureDirectories();
     }
 
@@ -91,13 +91,13 @@ export class FeedbackWebSocketServer {
     async restart(): Promise<number> {
         console.log('[MCP Feedback WS] Force restarting server...');
         this._stopInternal();
-        
+
         // Small delay to ensure port is released
         await new Promise(resolve => setTimeout(resolve, 500));
-        
+
         // Clean up any stale server files
         this._cleanupStaleServers();
-        
+
         // Restart
         return this.start();
     }
@@ -120,6 +120,38 @@ export class FeedbackWebSocketServer {
             })),
             pendingFeedback: this._pendingFeedback.size
         };
+    }
+
+    private _pendingComments: Map<string, string> = new Map(); // ProjectPath -> Comment
+
+    /**
+     * Update pending comment for a project (from Webview changes)
+     */
+    updatePendingComment(projectPath: string, comment: string): void {
+        if (comment) {
+            this._pendingComments.set(projectPath, comment);
+        } else {
+            this._pendingComments.delete(projectPath);
+        }
+    }
+
+    /**
+     * Get pending comment for a project (for MCP Resource)
+     */
+    getPendingComment(projectPath: string): string {
+        // Try exact match first
+        if (this._pendingComments.has(projectPath)) {
+            return this._pendingComments.get(projectPath) || '';
+        }
+
+        // Try finding if projectPath is a subdirectory of a known workspace
+        for (const [wsPath, comment] of this._pendingComments.entries()) {
+            if (projectPath.startsWith(wsPath)) {
+                return comment;
+            }
+        }
+
+        return '';
     }
 
     private _ensureDirectories(): void {
@@ -146,7 +178,7 @@ export class FeedbackWebSocketServer {
                 if (!file.endsWith('.json')) continue;
                 const pid = parseInt(file.replace('.json', ''));
                 if (isNaN(pid)) continue;
-                
+
                 // Check if process is alive
                 try {
                     process.kill(pid, 0);
@@ -167,21 +199,21 @@ export class FeedbackWebSocketServer {
      */
     async start(): Promise<number> {
         this._port = await this._findAvailablePort(DEFAULT_PORT);
-        
+
         return new Promise((resolve, reject) => {
-            this._wss = new WebSocketServer({ 
-                port: this._port, 
-                host: '127.0.0.1' 
+            this._wss = new WebSocketServer({
+                port: this._port,
+                host: '127.0.0.1'
             });
 
             this._wss.on('listening', () => {
                 console.log(`[MCP Feedback WS] Server listening on port ${this._port}`);
                 this._writeServerFile();
                 this._onStatusChange('running');
-                
+
                 // Start heartbeat monitoring
                 this._startHeartbeat();
-                
+
                 resolve(this._port);
             });
 
@@ -203,10 +235,10 @@ export class FeedbackWebSocketServer {
         if (this._heartbeatInterval) {
             clearInterval(this._heartbeatInterval);
         }
-        
+
         this._heartbeatInterval = setInterval(() => {
             const now = Date.now();
-            
+
             this._clients.forEach((client, ws) => {
                 // Check if client hasn't responded to ping in timeout period
                 const lastPong = this._clientLastPong.get(ws) || client.registeredAt;
@@ -222,7 +254,7 @@ export class FeedbackWebSocketServer {
                     this._clientLastPong.delete(ws);
                     return;
                 }
-                
+
                 // Send ping
                 if (ws.readyState === WebSocket.OPEN) {
                     try {
@@ -245,19 +277,19 @@ export class FeedbackWebSocketServer {
     private _stopInternal(): void {
         if (this._wss) {
             console.log('[MCP Feedback WS] Stopping server...');
-            
+
             // Clear heartbeat interval
             if (this._heartbeatInterval) {
                 clearInterval(this._heartbeatInterval);
                 this._heartbeatInterval = null;
             }
-            
+
             // Clear all pending feedback timeouts
             this._pendingFeedback.forEach((pending) => {
                 clearTimeout(pending.timeout);
             });
             this._pendingFeedback.clear();
-            
+
             // Force close all client connections with error code
             this._clients.forEach((client) => {
                 try {
@@ -278,7 +310,7 @@ export class FeedbackWebSocketServer {
 
             // Remove server file
             this._removeServerFile();
-            
+
             // Close database connection
             this._closeDb();
 
@@ -396,7 +428,7 @@ export class FeedbackWebSocketServer {
         ws.on('close', () => {
             const client = this._clients.get(ws);
             console.log(`[MCP Feedback WS] Client disconnected: ${client?.type || 'unknown'}`);
-            
+
             // Clean up pending feedback for this MCP Server
             if (client?.type === 'mcp-server') {
                 const toRemove: string[] = [];
@@ -411,7 +443,7 @@ export class FeedbackWebSocketServer {
                     console.log(`[MCP Feedback WS] Cleaned up pending feedback: session=${id}`);
                 });
             }
-            
+
             this._clients.delete(ws);
         });
 
@@ -438,18 +470,18 @@ export class FeedbackWebSocketServer {
                 client.projectPath = message.projectPath;
                 client.sessionId = message.sessionId;
                 console.log(`[MCP Feedback WS] Registered ${client.type}: project=${client.projectPath}`);
-                
+
                 // Send history to webview
                 if (client.type === 'webview' && client.projectPath) {
                     const messages = this._loadHistory(client.projectPath);
                     const sessions = this._toSessionRecords(messages);
                     this._send(ws, { type: 'history', sessions });
                 }
-                
+
                 // Notify status
-                this._send(ws, { 
-                    type: 'status_update', 
-                    ...this.getClientCounts() 
+                this._send(ws, {
+                    type: 'status_update',
+                    ...this.getClientCounts()
                 });
                 break;
 
@@ -477,12 +509,26 @@ export class FeedbackWebSocketServer {
                 this._clientLastPong.set(ws, Date.now());
                 this._send(ws, { type: 'pong' });
                 break;
+
+            case 'get_pending_comment':
+                // MCP Server requesting pending comment
+                const pPath = message.project_directory || client.projectPath;
+                if (pPath) {
+                    const comment = this.getPendingComment(pPath);
+                    this._send(ws, {
+                        type: 'pending_comment_result',
+                        request_id: message.request_id,
+                        project_directory: pPath,
+                        comment
+                    });
+                }
+                break;
         }
     }
 
     private _handleFeedbackRequest(client: Client, message: any): void {
         const { session_id, summary, project_directory, timeout, agent_name } = message;
-        
+
         console.log(`[MCP Feedback WS] Feedback request: session=${session_id}, project=${project_directory}, agent=${agent_name || 'default'}`);
 
         // Notify extension to auto-open panel
@@ -495,8 +541,8 @@ export class FeedbackWebSocketServer {
         const webviews = this._findWebviewsForProject(project_directory);
 
         // Use webview's projectPath as workspace
-        const workspace = webviews.length > 0 && webviews[0].projectPath 
-            ? webviews[0].projectPath 
+        const workspace = webviews.length > 0 && webviews[0].projectPath
+            ? webviews[0].projectPath
             : project_directory;
 
         // Add AI message to global history with both workspace and project_directory
@@ -505,7 +551,7 @@ export class FeedbackWebSocketServer {
             content: summary,
             timestamp: new Date().toISOString()
         }, project_directory);
-        
+
         if (webviews.length === 0) {
             // No webview connected - send error back to MCP Server
             this._send(client.ws, {
@@ -576,12 +622,12 @@ export class FeedbackWebSocketServer {
 
     private _handleFeedbackResponse(client: Client, message: any): void {
         const { session_id, feedback, images, dismissed } = message;
-        
+
         if (!session_id) {
             console.log(`[MCP Feedback WS] Ignoring feedback response without session_id`);
             return;
         }
-        
+
         console.log(`[MCP Feedback WS] Feedback response: session=${session_id}, dismissed=${!!dismissed}`);
 
         // Get project_directory from pending feedback (if exists)
@@ -614,7 +660,7 @@ export class FeedbackWebSocketServer {
         // Resolve/reject pending feedback (reuse pending from earlier)
         if (pending) {
             clearTimeout(pending.timeout);
-            
+
             if (dismissed) {
                 // User dismissed without response - reject
                 pending.reject(new Error('User dismissed the feedback request'));
@@ -637,16 +683,16 @@ export class FeedbackWebSocketServer {
     private _findWebviewsForProject(projectPath: string, singleOnly: boolean = false): Client[] {
         const exactMatches: Client[] = [];
         const prefixMatches: Client[] = [];
-        
+
         for (const [, client] of this._clients) {
             if (client.type !== 'webview') continue;
-            
+
             // Exact match (highest priority)
             if (client.projectPath === projectPath) {
                 exactMatches.push(client);
                 continue;
             }
-            
+
             // Path prefix match
             if (client.projectPath) {
                 if (projectPath.startsWith(client.projectPath) || client.projectPath.startsWith(projectPath)) {
@@ -654,10 +700,10 @@ export class FeedbackWebSocketServer {
                 }
             }
         }
-        
+
         // Prefer exact matches over prefix matches
         let matches = exactMatches.length > 0 ? exactMatches : prefixMatches;
-        
+
         // Fallback: all webviews if no match
         if (matches.length === 0) {
             for (const [, client] of this._clients) {
@@ -669,14 +715,14 @@ export class FeedbackWebSocketServer {
                 console.log(`[MCP Feedback WS] Using fallback: ${matches.length} webview(s)`);
             }
         }
-        
+
         // If multiple matches and singleOnly requested, return most recently registered
         if (singleOnly && matches.length > 1) {
             matches.sort((a, b) => b.registeredAt - a.registeredAt);
             console.log(`[MCP Feedback WS] Multiple webviews matched, using most recent (sessionId=${matches[0].sessionId})`);
             return [matches[0]];
         }
-        
+
         return matches;
     }
 
@@ -689,7 +735,7 @@ export class FeedbackWebSocketServer {
     // ============================================================================
     // History management - SQLite storage
     // ============================================================================
-    
+
     private static readonly DB_FILE = path.join(HISTORY_DIR, 'history.db');
     private _db: Database.Database | null = null;
 
@@ -698,10 +744,10 @@ export class FeedbackWebSocketServer {
      */
     private _getDb(): Database.Database {
         if (this._db) return this._db;
-        
+
         try {
             this._db = new Database(FeedbackWebSocketServer.DB_FILE);
-            
+
             // Create table if not exists
             this._db.exec(`
                 CREATE TABLE IF NOT EXISTS history (
@@ -717,7 +763,7 @@ export class FeedbackWebSocketServer {
                 CREATE INDEX IF NOT EXISTS idx_workspace ON history(workspace);
                 CREATE INDEX IF NOT EXISTS idx_project_directory ON history(project_directory);
             `);
-            
+
             console.log(`[MCP Feedback WS] SQLite database initialized: ${FeedbackWebSocketServer.DB_FILE}`);
             return this._db;
         } catch (e) {
@@ -749,9 +795,9 @@ export class FeedbackWebSocketServer {
                 ORDER BY id ASC
                 LIMIT ?
             `);
-            
+
             const rows = stmt.all(workspace, workspace, MAX_HISTORY_MESSAGES * 2) as any[];
-            
+
             return rows.map(row => ({
                 role: row.role as 'ai' | 'user',
                 content: row.content,
@@ -772,7 +818,7 @@ export class FeedbackWebSocketServer {
     private _toSessionRecords(messages: HistoryMessage[]): SessionRecord[] {
         const sessions: SessionRecord[] = [];
         let currentSession: Partial<SessionRecord> = {};
-        
+
         for (const msg of messages) {
             if (msg.role === 'ai') {
                 // New AI message = new session
@@ -791,12 +837,12 @@ export class FeedbackWebSocketServer {
                 currentSession = {};
             }
         }
-        
+
         // Add incomplete session (AI waiting for response)
         if (currentSession.summary) {
             sessions.push(currentSession as SessionRecord);
         }
-        
+
         return sessions;
     }
 
@@ -810,7 +856,7 @@ export class FeedbackWebSocketServer {
                 INSERT INTO history (role, content, timestamp, images, workspace, project_directory)
                 VALUES (?, ?, ?, ?, ?, ?)
             `);
-            
+
             stmt.run(
                 message.role,
                 message.content,
@@ -819,7 +865,7 @@ export class FeedbackWebSocketServer {
                 workspace,
                 projectDirectory || null
             );
-            
+
             // Cleanup old records (keep last N * 3 globally)
             const cleanupStmt = db.prepare(`
                 DELETE FROM history
@@ -828,7 +874,7 @@ export class FeedbackWebSocketServer {
                 )
             `);
             cleanupStmt.run(MAX_HISTORY_MESSAGES * 3);
-            
+
         } catch (e) {
             console.error(`[MCP Feedback WS] Failed to add to history: ${e}`);
         }
