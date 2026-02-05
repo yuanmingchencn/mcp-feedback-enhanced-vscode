@@ -45,6 +45,8 @@ ${getStyles()}
             <span class="version">v${VERSION}</span>
             <button class="status-btn" id="searchBtn" title="Search messages">🔍</button>
             <button class="status-btn" id="reloadBtn" title="Reload Panel">🔄</button>
+            <button class="status-btn scratch-toggle" id="scratchToggle" title="Scratch Pad">📋</button>
+            <button class="status-btn settings-toggle" id="settingsToggle" title="Settings">⚙️</button>
         </div>
         
         <div class="messages" id="messages">
@@ -56,28 +58,60 @@ ${getStyles()}
         </div>
         
         <div class="input-area">
-            <div class="quick-replies">
-                <button class="quick-btn" data-text="Continue">▶️ Continue</button>
-                <button class="quick-btn" data-text="Looks good">👍 Good</button>
-                <button class="quick-btn" data-text="Please fix">🔧 Fix</button>
-                <button class="quick-btn" data-text="Explain more">💡 Explain</button>
-                <button class="quick-btn" data-text="Think harder">🧠 Think</button>
-                <button class="quick-btn" data-text="You decide">🎯 Decide</button>
-                <button class="quick-btn scratch-toggle" id="scratchToggle">📋 Scratch</button>
-                <button class="quick-btn auto-reply-toggle" id="autoReplyToggle" title="Toggle Auto Reply">🔄 Auto</button>
+            <div class="quick-replies" id="quickRepliesContainer">
+                <!-- Quick replies populated dynamically -->
             </div>
             <div class="scratch-pad" id="scratchPad" style="display:none;">
                 <textarea id="scratchText" placeholder="Save notes, rules, templates here... (auto-saved)"></textarea>
             </div>
-            <div class="auto-reply-settings" id="autoReplySettings" style="display:none;">
-                <div class="auto-reply-header">
-                    <span class="auto-reply-label">🤖 Auto Reply Message:</span>
+            <div class="settings-container" id="settingsContainer" style="display:none;">
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <input type="checkbox" id="autoReplyCheckbox">
+                        <span class="settings-section-label">🔄 Auto Reply</span>
+                    </div>
+                    <div class="settings-section-content" id="autoReplyContent">
+                        <textarea id="autoReplyText" placeholder="Enter auto reply message... (e.g., Continue, LGTM, etc.)"></textarea>
+                    </div>
                 </div>
-                <textarea id="autoReplyText" placeholder="Enter auto reply message... (e.g., Continue, LGTM, etc.)"></textarea>
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <span class="settings-section-label">📜 Rules (enabled rules appended to feedback)</span>
+                    </div>
+                    <div class="settings-section-content">
+                        <div class="rules-list" id="rulesList"></div>
+                        <div class="rules-add">
+                            <input type="text" id="newRuleInput" placeholder="Add new rule...">
+                            <button id="addRuleBtn">+</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="settings-section">
+                    <div class="settings-section-header">
+                        <span class="settings-section-label">⚡ Quick Replies</span>
+                    </div>
+                    <div class="settings-section-content">
+                        <div class="quick-replies-list" id="quickRepliesList"></div>
+                        <div class="rules-add">
+                            <input type="text" id="newQuickReplyInput" placeholder="Add quick reply text...">
+                            <button id="addQuickReplyBtn">+</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="pending-section" id="pendingSection" style="display:none;">
+                <div class="pending-header">Pending comment</div>
+                <div class="pending-content-row">
+                    <span class="pending-text" id="pendingText"></span>
+                    <div class="pending-actions">
+                        <button id="editPendingBtn" title="Edit">✎</button>
+                        <button id="cancelPendingBtn" title="Cancel">✕</button>
+                    </div>
+                </div>
             </div>
             <div class="input-row">
                 <textarea id="input" placeholder="Type feedback... (Cmd+Enter to send)" rows="3"></textarea>
-                <button id="sendBtn" title="Send">➤</button>
+                <button id="sendBtn" title="Send (or queue if no AI request)">➤</button>
             </div>
         </div>
     </div>
@@ -298,9 +332,138 @@ body {
 }
 
 .scratch-toggle.active { background: var(--vscode-button-background); }
-.auto-reply-toggle.active { 
-    background: var(--vscode-terminal-ansiGreen, #4ec9b0);
+.settings-toggle.active {
+    background: var(--vscode-terminal-ansiYellow, #dcdcaa);
     color: var(--vscode-editor-background);
+}
+
+/* Settings Container */
+.settings-container {
+    margin-bottom: 8px;
+    padding: 8px;
+    border: 1px solid var(--vscode-terminal-ansiYellow, #dcdcaa);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 5%, var(--vscode-editor-background));
+}
+
+.settings-section {
+    margin-bottom: 8px;
+}
+
+.settings-section:last-child {
+    margin-bottom: 0;
+}
+
+.settings-section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+}
+
+.settings-section-header input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.settings-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--vscode-foreground);
+}
+
+.settings-section-content {
+    padding-left: 4px;
+}
+
+.settings-section-content textarea {
+    width: 100%;
+    min-height: 40px;
+    max-height: 80px;
+    resize: vertical;
+    padding: 6px 8px;
+    border: 1px solid var(--vscode-input-border, #333);
+    border-radius: 4px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    font-family: inherit;
+    font-size: 12px;
+}
+
+/* Rules List */
+.rules-list {
+    max-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 6px;
+}
+
+.rule-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    margin-bottom: 4px;
+    background: var(--vscode-input-background);
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.rule-item input[type="checkbox"] {
+    cursor: pointer;
+}
+
+.rule-item .rule-text {
+    flex: 1;
+    word-break: break-word;
+}
+
+.rule-item .rule-text.disabled {
+    opacity: 0.5;
+    text-decoration: line-through;
+}
+
+.rule-item .rule-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.rule-item .rule-btn {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 12px;
+    padding: 2px 4px;
+    border-radius: 3px;
+    opacity: 0.7;
+}
+
+.rule-item .rule-btn:hover {
+    opacity: 1;
+    background: rgba(255,255,255,0.1);
+}
+
+.rules-add {
+    display: flex;
+    gap: 6px;
+}
+
+.rules-add input {
+    flex: 1;
+    padding: 4px 8px;
+    border: 1px solid var(--vscode-input-border, #333);
+    border-radius: 4px;
+    background: var(--vscode-input-background);
+    color: var(--vscode-input-foreground);
+    font-size: 12px;
+}
+
+.rules-add button {
+    padding: 4px 10px;
+    background: var(--vscode-terminal-ansiMagenta, #c586c0);
+    color: var(--vscode-editor-background);
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
 }
 
 .scratch-pad {
@@ -403,6 +566,57 @@ body {
     font-size: 16px;
 }
 
+/* Pending Comment Section */
+.pending-section {
+    margin-bottom: 8px;
+    padding: 8px 10px;
+    background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 10%, var(--vscode-editor-background));
+    border: 1px solid var(--vscode-terminal-ansiYellow, #dcdcaa);
+    border-radius: 6px;
+}
+
+.pending-header {
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground, #888);
+    margin-bottom: 4px;
+}
+
+.pending-content-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pending-text {
+    flex: 1;
+    font-size: 12px;
+    color: var(--vscode-foreground);
+    word-break: break-word;
+}
+
+.pending-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.pending-actions button {
+    padding: 4px 8px;
+    background: transparent;
+    color: var(--vscode-foreground);
+    border: 1px solid var(--vscode-input-border, #333);
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 11px;
+    opacity: 0.7;
+}
+
+.pending-actions button:hover {
+    opacity: 1;
+    background: var(--vscode-button-secondaryHoverBackground);
+}
+
+
+
 #sendBtn:hover {
     background: var(--vscode-button-hoverBackground);
 }
@@ -444,19 +658,67 @@ function getScript() {
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('sendBtn');
     const reloadBtn = document.getElementById('reloadBtn');
+
+    const pendingSection = document.getElementById('pendingSection');
+    const pendingText = document.getElementById('pendingText');
+    const editPendingBtn = document.getElementById('editPendingBtn');
+    const cancelPendingBtn = document.getElementById('cancelPendingBtn');
+    
+    // Pending comment state
+    let pendingComment = '';
+    const PENDING_CACHE_KEY = 'mcp-feedback-pending-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     
     // Input cache key
     const INPUT_CACHE_KEY = 'mcp-feedback-input-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     
-    // Restore cached input
+    // Restore cached input and pending comment
     try {
         const cached = localStorage.getItem(INPUT_CACHE_KEY);
         if (cached) input.value = cached;
+        const pendingCached = localStorage.getItem(PENDING_CACHE_KEY);
+        if (pendingCached) {
+            pendingComment = pendingCached;
+            updatePendingUI();
+        }
     } catch {}
     
     // Save input on change
     input.addEventListener('input', () => {
         try { localStorage.setItem(INPUT_CACHE_KEY, input.value); } catch {}
+    });
+    
+    // Update pending UI
+    function updatePendingUI() {
+        if (pendingComment) {
+            pendingSection.style.display = 'block';
+            pendingText.textContent = pendingComment;
+        } else {
+            pendingSection.style.display = 'none';
+            pendingText.textContent = '';
+        }
+    }
+    
+
+    
+    // Edit pending - move back to input
+    editPendingBtn.addEventListener('click', () => {
+        if (pendingComment) {
+            input.value = pendingComment;
+            pendingComment = '';
+            try {
+                localStorage.removeItem(PENDING_CACHE_KEY);
+                localStorage.setItem(INPUT_CACHE_KEY, input.value);
+            } catch {}
+            updatePendingUI();
+            input.focus();
+        }
+    });
+    
+    // Cancel pending
+    cancelPendingBtn.addEventListener('click', () => {
+        pendingComment = '';
+        try { localStorage.removeItem(PENDING_CACHE_KEY); } catch {}
+        updatePendingUI();
     });
     
     // Search state (must be before render() call)
@@ -530,17 +792,26 @@ function getScript() {
         } catch {}
     });
     
-    // Auto-reply settings
-    const autoReplyToggle = document.getElementById('autoReplyToggle');
-    const autoReplySettings = document.getElementById('autoReplySettings');
+    // ============================================
+    // Settings Container (Auto-Reply + Rules)
+    // ============================================
+    const settingsToggle = document.getElementById('settingsToggle');
+    const settingsContainer = document.getElementById('settingsContainer');
+    const autoReplyCheckbox = document.getElementById('autoReplyCheckbox');
     const autoReplyText = document.getElementById('autoReplyText');
+    const rulesList = document.getElementById('rulesList');
+    const newRuleInput = document.getElementById('newRuleInput');
+    const addRuleBtn = document.getElementById('addRuleBtn');
+    
     const AUTO_REPLY_ENABLED_KEY = 'mcp-feedback-auto-reply-enabled-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     const AUTO_REPLY_TEXT_KEY = 'mcp-feedback-auto-reply-text-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+    const RULES_KEY = 'mcp-feedback-rules-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     
-    // State for auto-reply
+    // State
     let autoReplyEnabled = false;
+    let rules = [];
     
-    // Load saved auto-reply settings
+    // Load saved settings
     try {
         const enabledStr = localStorage.getItem(AUTO_REPLY_ENABLED_KEY);
         autoReplyEnabled = enabledStr === 'true';
@@ -548,25 +819,209 @@ function getScript() {
         if (savedText) autoReplyText.value = savedText;
         
         // Update UI based on saved state
-        if (autoReplyEnabled) {
-            autoReplyToggle.classList.add('active');
-            autoReplySettings.style.display = 'block';
-        }
+        autoReplyCheckbox.checked = autoReplyEnabled;
     } catch {}
     
-    // Toggle auto-reply panel and enable/disable
-    autoReplyToggle.addEventListener('click', () => {
-        autoReplyEnabled = !autoReplyEnabled;
-        autoReplyToggle.classList.toggle('active', autoReplyEnabled);
-        autoReplySettings.style.display = autoReplyEnabled ? 'block' : 'none';
+    // Load saved rules
+    function loadRules() {
+        try {
+            const saved = localStorage.getItem(RULES_KEY);
+            if (saved) rules = JSON.parse(saved);
+        } catch {}
+    }
+    
+    function saveRules() {
+        try {
+            localStorage.setItem(RULES_KEY, JSON.stringify(rules));
+        } catch {}
+    }
+    
+    // Toggle settings panel
+    settingsToggle.addEventListener('click', () => {
+        const isHidden = settingsContainer.style.display === 'none';
+        settingsContainer.style.display = isHidden ? 'block' : 'none';
+        settingsToggle.classList.toggle('active', isHidden);
+        if (isHidden) {
+            renderRules();
+            renderQuickRepliesSettings();
+        }
+    });
+    
+    // ============================================
+    // Quick Replies Management
+    // ============================================
+    const quickRepliesContainer = document.getElementById('quickRepliesContainer');
+    const quickRepliesList = document.getElementById('quickRepliesList');
+    const newQuickReplyInput = document.getElementById('newQuickReplyInput');
+    const addQuickReplyBtn = document.getElementById('addQuickReplyBtn');
+    const QUICK_REPLIES_KEY = 'mcp-feedback-quick-replies-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+    
+    // Default quick replies
+    const DEFAULT_QUICK_REPLIES = [
+        { id: '1', text: 'Continue', emoji: '\\u25b6\\ufe0f' },
+        { id: '2', text: 'Looks good', emoji: '\\ud83d\\udc4d' },
+        { id: '3', text: 'Please fix', emoji: '\\ud83d\\udd27' }
+    ];
+    
+    let quickReplies = [];
+    
+    // Load quick replies
+    function loadQuickReplies() {
+        try {
+            const saved = localStorage.getItem(QUICK_REPLIES_KEY);
+            if (saved) {
+                quickReplies = JSON.parse(saved);
+            } else {
+                quickReplies = [...DEFAULT_QUICK_REPLIES];
+            }
+        } catch {
+            quickReplies = [...DEFAULT_QUICK_REPLIES];
+        }
+    }
+    
+    function saveQuickReplies() {
+        try {
+            localStorage.setItem(QUICK_REPLIES_KEY, JSON.stringify(quickReplies));
+        } catch {}
+    }
+    
+    // Render ALL quick replies in toolbar
+    function renderQuickRepliesToolbar() {
+        // Remove existing quick reply buttons
+        const existingBtns = quickRepliesContainer.querySelectorAll('.quick-reply-btn');
+        existingBtns.forEach(btn => btn.remove());
+        
+        // Add ALL quick replies
+        quickReplies.forEach(qr => {
+            const btn = document.createElement('button');
+            btn.className = 'quick-btn quick-reply-btn';
+            btn.textContent = qr.text;
+            btn.title = qr.text;
+            btn.addEventListener('click', () => {
+                if (pendingSessionId) {
+                    submitFeedback(qr.text);
+                } else {
+                    input.value = qr.text;
+                    input.focus();
+                }
+            });
+            quickRepliesContainer.appendChild(btn);
+        });
+    }
+    
+    // Render quick replies in settings
+    function renderQuickRepliesSettings() {
+        quickRepliesList.innerHTML = '';
+        if (quickReplies.length === 0) {
+            quickRepliesList.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:4px;">No quick replies. Add one below.</div>';
+            return;
+        }
+        
+        quickReplies.forEach((qr, idx) => {
+            const item = document.createElement('div');
+            item.className = 'rule-item';
+            
+            // Text
+            const textSpan = document.createElement('span');
+            textSpan.className = 'rule-text';
+            textSpan.textContent = qr.text;
+            textSpan.title = 'Double-click to edit';
+            textSpan.addEventListener('dblclick', () => {
+                const newText = prompt('Edit quick reply:', qr.text);
+                if (newText !== null && newText.trim()) {
+                    quickReplies[idx].text = newText.trim();
+                    saveQuickReplies();
+                    renderQuickRepliesToolbar();
+                    renderQuickRepliesSettings();
+                }
+            });
+            item.appendChild(textSpan);
+            
+            // Actions
+            const actions = document.createElement('div');
+            actions.className = 'rule-actions';
+            
+            // Move up
+            if (idx > 0) {
+                const upBtn = document.createElement('button');
+                upBtn.className = 'rule-btn';
+                upBtn.textContent = '\\u2191';
+                upBtn.title = 'Move up';
+                upBtn.addEventListener('click', () => {
+                    [quickReplies[idx - 1], quickReplies[idx]] = [quickReplies[idx], quickReplies[idx - 1]];
+                    saveQuickReplies();
+                    renderQuickRepliesToolbar();
+                    renderQuickRepliesSettings();
+                });
+                actions.appendChild(upBtn);
+            }
+            
+            // Move down
+            if (idx < quickReplies.length - 1) {
+                const downBtn = document.createElement('button');
+                downBtn.className = 'rule-btn';
+                downBtn.textContent = '\\u2193';
+                downBtn.title = 'Move down';
+                downBtn.addEventListener('click', () => {
+                    [quickReplies[idx], quickReplies[idx + 1]] = [quickReplies[idx + 1], quickReplies[idx]];
+                    saveQuickReplies();
+                    renderQuickRepliesToolbar();
+                    renderQuickRepliesSettings();
+                });
+                actions.appendChild(downBtn);
+            }
+            
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'rule-btn';
+            deleteBtn.textContent = '\\ud83d\\uddd1\\ufe0f';
+            deleteBtn.title = 'Delete';
+            deleteBtn.addEventListener('click', () => {
+                quickReplies.splice(idx, 1);
+                saveQuickReplies();
+                renderQuickRepliesToolbar();
+                renderQuickRepliesSettings();
+            });
+            actions.appendChild(deleteBtn);
+            
+            item.appendChild(actions);
+            quickRepliesList.appendChild(item);
+        });
+    }
+    
+    // Add new quick reply
+    function addQuickReply() {
+        const text = newQuickReplyInput.value.trim();
+        if (!text) return;
+        
+        quickReplies.push({
+            id: Date.now().toString(),
+            text: text
+        });
+        saveQuickReplies();
+        renderQuickRepliesToolbar();
+        renderQuickRepliesSettings();
+        newQuickReplyInput.value = '';
+    }
+    
+    addQuickReplyBtn.addEventListener('click', addQuickReply);
+    newQuickReplyInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addQuickReply();
+        }
+    });
+    
+    // Initialize quick replies
+    loadQuickReplies();
+    renderQuickRepliesToolbar();
+    
+    // Auto-reply checkbox
+    autoReplyCheckbox.addEventListener('change', () => {
+        autoReplyEnabled = autoReplyCheckbox.checked;
         try {
             localStorage.setItem(AUTO_REPLY_ENABLED_KEY, autoReplyEnabled.toString());
         } catch {}
-        
-        // Focus the text area when enabling
-        if (autoReplyEnabled) {
-            autoReplyText.focus();
-        }
     });
     
     // Save auto-reply text on change
@@ -575,6 +1030,108 @@ function getScript() {
             localStorage.setItem(AUTO_REPLY_TEXT_KEY, autoReplyText.value);
         } catch {}
     });
+    
+    // Render rules list
+    function renderRules() {
+        rulesList.innerHTML = '';
+        if (rules.length === 0) {
+            rulesList.innerHTML = '<div style="opacity:0.5;font-size:11px;padding:4px;">No rules yet. Add one below.</div>';
+            return;
+        }
+        
+        rules.forEach((rule, idx) => {
+            const item = document.createElement('div');
+            item.className = 'rule-item';
+            
+            // Checkbox
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.checked = rule.enabled;
+            checkbox.title = rule.enabled ? 'Disable rule' : 'Enable rule';
+            checkbox.addEventListener('change', () => {
+                rules[idx].enabled = checkbox.checked;
+                saveRules();
+                renderRules();
+            });
+            item.appendChild(checkbox);
+            
+            // Text
+            const textSpan = document.createElement('span');
+            textSpan.className = 'rule-text' + (rule.enabled ? '' : ' disabled');
+            textSpan.textContent = rule.content;
+            textSpan.title = 'Double-click to edit';
+            textSpan.addEventListener('dblclick', () => {
+                const newContent = prompt('Edit rule:', rule.content);
+                if (newContent !== null && newContent.trim()) {
+                    rules[idx].content = newContent.trim();
+                    saveRules();
+                    renderRules();
+                }
+            });
+            item.appendChild(textSpan);
+            
+            // Actions
+            const actions = document.createElement('div');
+            actions.className = 'rule-actions';
+            
+            // Edit button
+            const editBtn = document.createElement('button');
+            editBtn.className = 'rule-btn';
+            editBtn.textContent = '\u270f\ufe0f';
+            editBtn.title = 'Edit';
+            editBtn.addEventListener('click', () => {
+                const newContent = prompt('Edit rule:', rule.content);
+                if (newContent !== null && newContent.trim()) {
+                    rules[idx].content = newContent.trim();
+                    saveRules();
+                    renderRules();
+                }
+            });
+            actions.appendChild(editBtn);
+            
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'rule-btn';
+            deleteBtn.textContent = '\ud83d\uddd1\ufe0f';
+            deleteBtn.title = 'Delete';
+            deleteBtn.addEventListener('click', () => {
+                rules.splice(idx, 1);
+                saveRules();
+                renderRules();
+            });
+            actions.appendChild(deleteBtn);
+            
+            item.appendChild(actions);
+            rulesList.appendChild(item);
+        });
+    }
+    
+    // Add new rule
+    function addRule() {
+        const content = newRuleInput.value.trim();
+        if (!content) return;
+        
+        rules.push({
+            id: Date.now().toString(),
+            content: content,
+            enabled: true
+        });
+        saveRules();
+        renderRules();
+        newRuleInput.value = '';
+    }
+    
+    addRuleBtn.addEventListener('click', addRule);
+    newRuleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            addRule();
+        }
+    });
+    
+    // Load rules on startup
+    loadRules();
+    
     
     // Hot-reload WebSocket connection
     function connectHotReload() {
@@ -612,8 +1169,19 @@ function getScript() {
     // Send button
     sendBtn.addEventListener('click', () => {
         const text = input.value.trim();
-        if (text && pendingSessionId) {
-            submitFeedback(text);
+        if (text) {
+            if (pendingSessionId) {
+                submitFeedback(text);
+            } else {
+                // Queue info pending if not sending
+                pendingComment = text;
+                input.value = '';
+                try {
+                    localStorage.setItem(PENDING_CACHE_KEY, pendingComment);
+                    localStorage.removeItem(INPUT_CACHE_KEY);
+                } catch {}
+                updatePendingUI();
+            }
         }
     });
     
@@ -622,8 +1190,20 @@ function getScript() {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
             const text = input.value.trim();
-            if (text && pendingSessionId) {
-                submitFeedback(text);
+            if (text) {
+                if (e.shiftKey || !pendingSessionId) {
+                    // Cmd+Shift+Enter OR Cmd+Enter (when no session) = Queue
+                    pendingComment = text;
+                    input.value = '';
+                    try {
+                        localStorage.setItem(PENDING_CACHE_KEY, pendingComment);
+                        localStorage.removeItem(INPUT_CACHE_KEY);
+                    } catch {}
+                    updatePendingUI();
+                } else {
+                    // Cmd+Enter = Send (if session pending)
+                    submitFeedback(text);
+                }
             }
         }
     });
@@ -724,6 +1304,18 @@ function getScript() {
                             submitFeedback(replyText);
                         }
                     }, 500);
+                } else if (pendingComment) {
+                    // Pending comment - send and clear
+                    const textToSend = pendingComment;
+                    console.log('[MCP Feedback] Pending comment triggered:', textToSend);
+                    setTimeout(() => {
+                        if (pendingSessionId) {
+                            submitFeedback(textToSend);
+                            pendingComment = '';
+                            try { localStorage.removeItem(PENDING_CACHE_KEY); } catch {}
+                            updatePendingUI();
+                        }
+                    }, 500);
                 }
                 break;
                 
@@ -776,9 +1368,17 @@ function getScript() {
     function submitFeedback(text) {
         if (!pendingSessionId || !ws || ws.readyState !== WebSocket.OPEN) return;
         
+        // Append enabled rules to feedback
+        const enabledRules = rules.filter(r => r.enabled);
+        let feedbackText = text;
+        if (enabledRules.length > 0) {
+            const rulesText = enabledRules.map((r, i) => (i + 1) + '.' + r.content).join(' ');
+            feedbackText = text + '\\n\\n请始终遵守以下rules: ' + rulesText;
+        }
+        
         messages.push({
             role: 'user',
-            content: text,
+            content: feedbackText,
             timestamp: new Date().toISOString()
         });
         
@@ -788,7 +1388,7 @@ function getScript() {
         ws.send(JSON.stringify({
             type: 'feedback_response',
             session_id: pendingSessionId,
-            feedback: text,
+            feedback: feedbackText,
             images: []
         }));
         
