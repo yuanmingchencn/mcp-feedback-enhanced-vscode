@@ -46,7 +46,7 @@ ${getStyles()}
             <button class="status-btn" id="searchBtn" title="Search messages">🔍</button>
             <button class="status-btn" id="reloadBtn" title="Reload Panel">🔄</button>
             <button class="status-btn" id="historyBtn" title="Session History">📋</button>
-            <button class="status-btn scratch-toggle" id="scratchToggle" title="Scratch Pad">📋</button>
+            <button class="status-btn" id="historyBtn" title="Session History">📋</button>
             <button class="status-btn settings-toggle" id="settingsToggle" title="Settings">⚙️</button>
         </div>
         
@@ -66,9 +66,7 @@ ${getStyles()}
             <div class="quick-replies" id="quickRepliesContainer">
                 <!-- Quick replies populated dynamically -->
             </div>
-            <div class="scratch-pad" id="scratchPad" style="display:none;">
-                <textarea id="scratchText" placeholder="Save notes, rules, templates here... (auto-saved)"></textarea>
-            </div>
+            
             <div class="settings-container" id="settingsContainer" style="display:none;">
                 <div class="settings-section">
                     <div class="settings-section-header">
@@ -104,14 +102,14 @@ ${getStyles()}
                     </div>
                 </div>
             </div>
+            
             <div class="pending-section" id="pendingSection" style="display:none;">
-                <div class="pending-header">Pending comment</div>
-                <div class="pending-content-row">
-                    <span class="pending-text" id="pendingText"></span>
-                    <div class="pending-actions">
-                        <button id="editPendingBtn" title="Edit">✎</button>
-                        <button id="cancelPendingBtn" title="Cancel">✕</button>
-                    </div>
+                <div class="pending-header">
+                    <span>Pending Queue</span>
+                    <button class="clear-pending-btn" id="clearPendingBtn" title="Clear all">✕</button>
+                </div>
+                <div class="pending-list" id="pendingList">
+                    <!-- Pending items populated dynamically -->
                 </div>
             </div>
             <div class="input-row">
@@ -780,29 +778,30 @@ function getScript() {
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('sendBtn');
     const reloadBtn = document.getElementById('reloadBtn');
+    const historyBtn = document.getElementById('historyBtn');
     const tabBar = document.getElementById('tabBar');
     const tabBarScroll = document.getElementById('tabBarScroll');
-    const historyBtn = document.getElementById('historyBtn');
-
+    
+    // Pending Queue DOM
     const pendingSection = document.getElementById('pendingSection');
-    const pendingText = document.getElementById('pendingText');
-    const editPendingBtn = document.getElementById('editPendingBtn');
-    const cancelPendingBtn = document.getElementById('cancelPendingBtn');
+    const pendingList = document.getElementById('pendingList');
+    const clearPendingBtn = document.getElementById('clearPendingBtn');
     
-    // Pending comment state
-    let pendingComment = '';
-    const PENDING_CACHE_KEY = 'mcp-feedback-pending-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
-    
+    // Pending comments queue state
+    let pendingComments = [];
+    const PENDING_CACHE_KEY = 'mcp-feedback-pending-queue-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     // Input cache key
     const INPUT_CACHE_KEY = 'mcp-feedback-input-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
     
-    // Restore cached input and pending comment
+    // Restore cached content
     try {
-        const cached = localStorage.getItem(INPUT_CACHE_KEY);
-        if (cached) input.value = cached;
-        const pendingCached = localStorage.getItem(PENDING_CACHE_KEY);
-        if (pendingCached) {
-            pendingComment = pendingCached;
+        const cachedInput = localStorage.getItem(INPUT_CACHE_KEY);
+        if (cachedInput) input.value = cachedInput;
+        
+        const cachedPending = localStorage.getItem(PENDING_CACHE_KEY);
+        if (cachedPending) {
+            pendingComments = JSON.parse(cachedPending);
+            if (!Array.isArray(pendingComments)) pendingComments = []; // Safety
             updatePendingUI();
         }
     } catch {}
@@ -810,83 +809,114 @@ function getScript() {
     // Save input on change
     input.addEventListener('input', () => {
         try { localStorage.setItem(INPUT_CACHE_KEY, input.value); } catch {}
+        updateSendButtonState();
     });
     
-    // Update pending UI
+    function savePendingComments() {
+        try {
+            if (pendingComments.length > 0) {
+                localStorage.setItem(PENDING_CACHE_KEY, JSON.stringify(pendingComments));
+            } else {
+                localStorage.removeItem(PENDING_CACHE_KEY);
+            }
+        } catch {}
+        updatePendingUI();
+        updateSendButtonState();
+    }
+    
+    function addToQueue(text) {
+        if (!text || !text.trim()) return;
+        pendingComments.push(text.trim());
+        savePendingComments();
+        input.value = '';
+        try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+        updateSendButtonState();
+    }
+
     // Update pending UI
     function updatePendingUI() {
-        if (pendingComment) {
+        if (pendingComments.length > 0) {
             pendingSection.style.display = 'block';
-            pendingText.textContent = pendingComment;
+            pendingList.innerHTML = '';
+            
+            pendingComments.forEach((comment, idx) => {
+                const item = document.createElement('div');
+                item.className = 'pending-content-row';
+                item.style.marginBottom = '4px';
+                
+                const text = document.createElement('span');
+                text.className = 'pending-text';
+                text.textContent = comment;
+                item.appendChild(text);
+                
+                const actions = document.createElement('div');
+                actions.className = 'pending-actions';
+                
+                // Edit
+                const editBtn = document.createElement('button');
+                editBtn.textContent = '✎';
+                editBtn.title = 'Edit';
+                editBtn.onclick = () => {
+                    input.value = comment;
+                    pendingComments.splice(idx, 1);
+                    savePendingComments();
+                    input.focus();
+                };
+                actions.appendChild(editBtn);
+                
+                // Delete
+                const delBtn = document.createElement('button');
+                delBtn.textContent = '✕';
+                delBtn.title = 'Remove';
+                delBtn.onclick = () => {
+                    pendingComments.splice(idx, 1);
+                    savePendingComments();
+                };
+                actions.appendChild(delBtn);
+                
+                item.appendChild(actions);
+                pendingList.appendChild(item);
+            });
+            
         } else {
             pendingSection.style.display = 'none';
-            pendingText.textContent = '';
+            pendingList.innerHTML = '';
         }
         
         // Sync to extension host (for MCP Resource)
+        // For MCP Resource compatibility, we join them.
+        const combined = pendingComments.join('\n\n');
         vscode.postMessage({
             type: 'pending-update',
-            value: pendingComment || ''
+            value: combined
         });
     }
     
-
-    
-    // Edit pending - move back to input
-    editPendingBtn.addEventListener('click', () => {
-        if (pendingComment) {
-            input.value = pendingComment;
-            pendingComment = '';
-            try {
-                localStorage.removeItem(PENDING_CACHE_KEY);
-                localStorage.setItem(INPUT_CACHE_KEY, input.value);
-            } catch {}
-            updatePendingUI();
-            input.focus();
+    // Clear all pending
+    clearPendingBtn.addEventListener('click', () => {
+        if (confirm('Clear all pending comments?')) {
+            pendingComments = [];
+            savePendingComments();
         }
     });
-    
-    // Cancel pending
-    cancelPendingBtn.addEventListener('click', () => {
-        pendingComment = '';
-        try { localStorage.removeItem(PENDING_CACHE_KEY); } catch {}
-        updatePendingUI();
-    });
-    
-    // Search state (must be before render() call)
-    let searchTerm = '';
-    
-    // Initialize
-    loadHistory();
-    // Restore tab state from localStorage
-    loadTabState();
-    renderTabBar();
-    
-    // Load messages for the active tab if any
-    if (activeTabAgent) {
-        const cached = loadCachedMessages(activeTabAgent);
-        if (cached && cached.length > 0) {
-            messages = cached;
-            render();
+
+    function updateSendButtonState() {
+        const hasInput = input.value.trim().length > 0;
+        const hasPending = pendingComments.length > 0;
+        
+        if (pendingSessionId) {
+            sendBtn.disabled = !(hasInput || hasPending);
+            sendBtn.title = (hasInput || hasPending) ? 'Send Feedback' : 'Type feedback...';
+        } else {
+            // No active session -> "Queue" mode
+            // Send button acts as "Add to Queue"
+            sendBtn.disabled = !hasInput;
+            sendBtn.title = hasInput ? 'Add to Queue' : 'Type to queue...';
         }
     }
     
-    connect();
-    if (HOT_RELOAD_ENABLED) connectHotReload();
-    
-    // Search functionality
-    const searchBtn = document.getElementById('searchBtn');
-    const searchInput = document.getElementById('searchInput');
-    let searchVisible = false;
-    
-    searchBtn.addEventListener('click', () => {
-        searchVisible = !searchVisible;
-        searchInput.style.display = searchVisible ? 'block' : 'none';
-        if (searchVisible) {
-            searchInput.focus();
-        } else {
-            searchInput.value = '';
-            searchTerm = '';
+    // Search state (must be before render() call)
+    let searchTerm = '';
             render();  // Re-render without filter
         }
     });
@@ -918,30 +948,6 @@ function getScript() {
         if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'get_sessions' }));
         }
-    });
-    
-    // Scratch pad toggle and persistence
-    const scratchToggle = document.getElementById('scratchToggle');
-    const scratchPad = document.getElementById('scratchPad');
-    const scratchText = document.getElementById('scratchText');
-    const SCRATCH_KEY = 'mcp-feedback-scratch-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
-    
-    // Load saved scratch content
-    try {
-        const saved = localStorage.getItem(SCRATCH_KEY);
-        if (saved) scratchText.value = saved;
-    } catch {}
-    
-    scratchToggle.addEventListener('click', () => {
-        const isHidden = scratchPad.style.display === 'none';
-        scratchPad.style.display = isHidden ? 'block' : 'none';
-        scratchToggle.classList.toggle('active', isHidden);
-    });
-    
-    scratchText.addEventListener('input', () => {
-        try {
-            localStorage.setItem(SCRATCH_KEY, scratchText.value);
-        } catch {}
     });
     
     // ============================================
@@ -1565,18 +1571,26 @@ function getScript() {
     // Send button
     sendBtn.addEventListener('click', () => {
         const text = input.value.trim();
-        if (text) {
-            if (pendingSessionId) {
-                submitFeedback(text);
-            } else {
-                // Queue info pending if not sending
-                pendingComment = text;
+        
+        if (pendingSessionId) {
+            // Session active: Send ALL pending + current input
+            const parts = [...pendingComments];
+            if (text) parts.push(text);
+            
+            if (parts.length > 0) {
+                const combined = parts.join('\n\n');
+                submitFeedback(combined);
+                
+                // Clear all
                 input.value = '';
-                try {
-                    localStorage.setItem(PENDING_CACHE_KEY, pendingComment);
-                    localStorage.removeItem(INPUT_CACHE_KEY);
-                } catch {}
-                updatePendingUI();
+                pendingComments = [];
+                savePendingComments();
+                try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+            }
+        } else {
+            // No session: Queue input
+            if (text) {
+                addToQueue(text);
             }
         }
     });
@@ -1586,19 +1600,29 @@ function getScript() {
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
             e.preventDefault();
             const text = input.value.trim();
-            if (text) {
-                if (e.shiftKey || !pendingSessionId) {
-                    // Cmd+Shift+Enter OR Cmd+Enter (when no session) = Queue
-                    pendingComment = text;
-                    input.value = '';
-                    try {
-                        localStorage.setItem(PENDING_CACHE_KEY, pendingComment);
-                        localStorage.removeItem(INPUT_CACHE_KEY);
-                    } catch {}
-                    updatePendingUI();
+            
+            if (e.shiftKey) {
+                // Cmd+Shift+Enter: Always Queue
+                if (text) addToQueue(text);
+            } else {
+                // Cmd+Enter
+                if (pendingSessionId) {
+                    // Send immediately
+                    const parts = [...pendingComments];
+                    if (text) parts.push(text);
+                    
+                    if (parts.length > 0) {
+                        const combined = parts.join('\n\n');
+                        submitFeedback(combined);
+                        
+                        input.value = '';
+                        pendingComments = [];
+                        savePendingComments();
+                        try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+                    }
                 } else {
-                    // Cmd+Enter = Send (if session pending)
-                    submitFeedback(text);
+                    // Queue
+                    if (text) addToQueue(text);
                 }
             }
         }
