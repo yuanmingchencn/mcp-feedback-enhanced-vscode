@@ -27,6 +27,7 @@ if (isProduction) {
 function generateHTML() {
     return `<!DOCTYPE html>
 <html lang="en">
+</head>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -35,7 +36,17 @@ function generateHTML() {
     <style>
 ${getStyles()}
     </style>
-</head>
+    <script>
+        window.onerror = function(msg, url, line, col, error) {
+            const statusText = document.getElementById('statusText');
+            if (statusText) {
+                statusText.textContent = 'Err: ' + msg;
+                statusText.style.color = '#ff6b6b';
+            }
+            // Also try to send to console
+            return false;
+        };
+    </script>
 <body>
     <div class="container">
         <div class="status-bar">
