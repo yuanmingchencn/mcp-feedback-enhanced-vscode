@@ -981,8 +981,12 @@ function getScript() {
             if (saved) rules = JSON.parse(saved);
         } catch {}
         // Sync initial state
-        const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
-        vscode.postMessage({ type: 'rules-update', rules: enabledRules });
+        try {
+            const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
+            vscode.postMessage({ type: 'rules-update', rules: enabledRules });
+        } catch (e) {
+            console.error('[MCP Feedback] Failed to sync rules:', e);
+        }
     }
     
     function saveRules() {
@@ -990,8 +994,12 @@ function getScript() {
             localStorage.setItem(RULES_KEY, JSON.stringify(rules));
         } catch {}
         // Sync update
-        const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
-        vscode.postMessage({ type: 'rules-update', rules: enabledRules });
+        try {
+            const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
+            vscode.postMessage({ type: 'rules-update', rules: enabledRules });
+        } catch (e) {
+            console.error('[MCP Feedback] Failed to sync rules:', e);
+        }
     }
     
     // Toggle settings panel

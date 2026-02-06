@@ -1,6 +1,6 @@
 {
   "name": "mcp-feedback-enhanced",
-  "version": "1.0.9",
+  "version": "1.0.10",
   "description": "MCP Feedback Enhanced Server - Interactive feedback collection for AI assistants",
   "type": "module",
   "main": "dist/index.js",
@@ -17,7 +17,7 @@
     "vscode",
     "claude"
   ],
-  "author": "yuanmingchencn",
+  "author": "mcp-feedback",
   "license": "MIT",
   "repository": {
     "type": "git",

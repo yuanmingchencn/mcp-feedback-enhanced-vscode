@@ -48,7 +48,7 @@ if (fs.existsSync(extPath)) {
 }
 
 // 4. Check symlink
-const symlinkPath = path.join(process.env.HOME, '.cursor', 'extensions', 'yuanmingchencn.mcp-feedback-enhanced-vscode-dev');
+const symlinkPath = path.join(process.env.HOME, '.cursor', 'extensions', 'mcp-feedback.mcp-feedback-enhanced-vscode-dev');
 try {
     const linkTarget = fs.readlinkSync(symlinkPath);
     check('Symlink exists and points to dev folder', linkTarget.includes('mcp-feedback-enhanced'));
