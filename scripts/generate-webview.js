@@ -45,8 +45,13 @@ ${getStyles()}
             <span class="version">v${VERSION}</span>
             <button class="status-btn" id="searchBtn" title="Search messages">🔍</button>
             <button class="status-btn" id="reloadBtn" title="Reload Panel">🔄</button>
+            <button class="status-btn" id="historyBtn" title="Session History">📋</button>
             <button class="status-btn scratch-toggle" id="scratchToggle" title="Scratch Pad">📋</button>
             <button class="status-btn settings-toggle" id="settingsToggle" title="Settings">⚙️</button>
+        </div>
+        
+        <div class="tab-bar" id="tabBar">
+            <div class="tab-bar-scroll" id="tabBarScroll"></div>
         </div>
         
         <div class="messages" id="messages">
@@ -625,6 +630,119 @@ body {
     opacity: 0.5;
     cursor: not-allowed;
 }
+
+/* Tab Bar */
+.tab-bar {
+    display: flex;
+    align-items: center;
+    background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-editor-background));
+    border-bottom: 1px solid var(--vscode-panel-border, #444);
+    min-height: 35px;
+    overflow: hidden;
+}
+
+.tab-bar-scroll {
+    display: flex;
+    overflow-x: auto;
+    flex: 1;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+
+.tab-bar-scroll::-webkit-scrollbar {
+    display: none;
+}
+
+.tab-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    font-size: 12px;
+    white-space: nowrap;
+    cursor: pointer;
+    border-right: 1px solid color-mix(in srgb, var(--vscode-panel-border, #444) 50%, transparent);
+    color: var(--vscode-tab-inactiveForeground, var(--vscode-descriptionForeground));
+    background: transparent;
+    transition: all 0.1s ease;
+    position: relative;
+    max-width: 160px;
+}
+
+.tab-item:hover {
+    background: var(--vscode-tab-hoverBackground, rgba(255,255,255,0.05));
+    color: var(--vscode-tab-hoverForeground, var(--vscode-foreground));
+}
+
+.tab-item.active {
+    color: var(--vscode-tab-activeForeground, var(--vscode-foreground));
+    background: var(--vscode-tab-activeBackground, var(--vscode-editor-background));
+    border-bottom: 2px solid var(--vscode-focusBorder, #007fd4);
+}
+
+.tab-item-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    flex: 1;
+}
+
+.tab-item-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--vscode-statusBarItem-warningBackground, #f0ad4e);
+    flex-shrink: 0;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+}
+
+.tab-item-close {
+    opacity: 0;
+    font-size: 14px;
+    line-height: 1;
+    padding: 0 2px;
+    cursor: pointer;
+    color: var(--vscode-descriptionForeground);
+    flex-shrink: 0;
+}
+
+.tab-item:hover .tab-item-close {
+    opacity: 0.7;
+}
+
+.tab-item-close:hover {
+    opacity: 1 !important;
+    color: var(--vscode-errorForeground, #f44);
+}
+
+.tab-item-unread {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--vscode-notificationsInfoIcon-foreground, #3794ff);
+    flex-shrink: 0;
+}
+
+.tab-bar-empty {
+    padding: 8px 12px;
+    color: var(--vscode-descriptionForeground);
+    font-size: 12px;
+    font-style: italic;
+}
+
+/* Historical session indicator */
+.session-ended-banner {
+    text-align: center;
+    padding: 8px;
+    font-size: 11px;
+    color: var(--vscode-descriptionForeground);
+    background: color-mix(in srgb, var(--vscode-editor-background) 90%, var(--vscode-panel-border) 10%);
+    border-bottom: 1px solid var(--vscode-panel-border, #444);
+}
 `;
 }
 
@@ -650,6 +768,10 @@ function getScript() {
     let reconnectAttempts = 0;
     const maxReconnectAttempts = 10;
     
+    // Tab management
+    let tabs = []; // [{agent_name, pendingSessionId, hasUnread, lastTimestamp}]
+    let activeTabAgent = null; // agent_name of the currently displayed tab
+    
     // DOM
     const statusDot = document.getElementById('statusDot');
     const statusText = document.getElementById('statusText');
@@ -658,6 +780,9 @@ function getScript() {
     const input = document.getElementById('input');
     const sendBtn = document.getElementById('sendBtn');
     const reloadBtn = document.getElementById('reloadBtn');
+    const tabBar = document.getElementById('tabBar');
+    const tabBarScroll = document.getElementById('tabBarScroll');
+    const historyBtn = document.getElementById('historyBtn');
 
     const pendingSection = document.getElementById('pendingSection');
     const pendingText = document.getElementById('pendingText');
@@ -733,7 +858,19 @@ function getScript() {
     
     // Initialize
     loadHistory();
-    render();
+    // Restore tab state from localStorage
+    loadTabState();
+    renderTabBar();
+    
+    // Load messages for the active tab if any
+    if (activeTabAgent) {
+        const cached = loadCachedMessages(activeTabAgent);
+        if (cached && cached.length > 0) {
+            messages = cached;
+            render();
+        }
+    }
+    
     connect();
     if (HOT_RELOAD_ENABLED) connectHotReload();
     
@@ -773,6 +910,14 @@ function getScript() {
             }
             connect();
         }, 500);
+    });
+    
+    // History button click handler
+    historyBtn.addEventListener('click', () => {
+        // Refresh sessions list from server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'get_sessions' }));
+        }
     });
     
     // Scratch pad toggle and persistence
@@ -835,12 +980,18 @@ function getScript() {
             const saved = localStorage.getItem(RULES_KEY);
             if (saved) rules = JSON.parse(saved);
         } catch {}
+        // Sync initial state
+        const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
+        vscode.postMessage({ type: 'rules-update', rules: enabledRules });
     }
     
     function saveRules() {
         try {
             localStorage.setItem(RULES_KEY, JSON.stringify(rules));
         } catch {}
+        // Sync update
+        const enabledRules = rules.filter(r => r.enabled).map(r => r.content);
+        vscode.postMessage({ type: 'rules-update', rules: enabledRules });
     }
     
     // Toggle settings panel
@@ -1139,6 +1290,236 @@ function getScript() {
     // Load rules on startup
     loadRules();
     
+    // ============================================
+    // Tab Management Functions
+    // ============================================
+    function findTab(agentName) {
+        return tabs.find(t => t.agent_name === agentName);
+    }
+    
+    function ensureTab(agentName, opts = {}) {
+        let tab = findTab(agentName);
+        if (!tab) {
+            tab = {
+                agent_name: agentName,
+                pendingSessionId: opts.pendingSessionId || null,
+                hasUnread: opts.hasUnread || false,
+                lastTimestamp: opts.lastTimestamp || new Date().toISOString()
+            };
+            tabs.push(tab);
+        }
+        if (opts.pendingSessionId !== undefined) tab.pendingSessionId = opts.pendingSessionId;
+        if (opts.lastTimestamp) tab.lastTimestamp = opts.lastTimestamp;
+        if (opts.hasUnread !== undefined) tab.hasUnread = opts.hasUnread;
+        return tab;
+    }
+    
+    function switchTab(agentName) {
+        // Save current messages to cache before switching
+        if (activeTabAgent) {
+            saveCachedMessages(activeTabAgent, messages);
+        }
+        
+        activeTabAgent = agentName;
+        const tab = findTab(agentName);
+        if (tab) {
+            tab.hasUnread = false;
+            pendingSessionId = tab.pendingSessionId;
+        } else {
+            pendingSessionId = null;
+        }
+        
+        // Try loading from cache first
+        const cached = loadCachedMessages(agentName);
+        if (cached && cached.length > 0) {
+            messages = cached;
+            render();
+            renderTabBar();
+        } else {
+            messages = [];
+            render();
+            renderTabBar();
+        }
+        
+        // Also request fresh data from server
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'load_session', agent_name: agentName }));
+        }
+        
+        // Update input area visibility
+        updateInputVisibility();
+        saveTabState();
+    }
+    
+    function closeTab(agentName) {
+        tabs = tabs.filter(t => t.agent_name !== agentName);
+        clearCachedMessages(agentName);
+        
+        if (activeTabAgent === agentName) {
+            // Switch to another tab
+            if (tabs.length > 0) {
+                // Prefer an active tab, then most recent
+                const activeTab = tabs.find(t => t.pendingSessionId) || tabs[0];
+                switchTab(activeTab.agent_name);
+            } else {
+                activeTabAgent = null;
+                messages = [];
+                pendingSessionId = null;
+                render();
+            }
+        }
+        renderTabBar();
+        saveTabState();
+    }
+    
+    function updateInputVisibility() {
+        const inputArea = document.querySelector('.input-area');
+        const tab = findTab(activeTabAgent);
+        if (tab && tab.pendingSessionId) {
+            inputArea.style.display = '';
+            sendBtn.disabled = false;
+        } else if (activeTabAgent) {
+            // Historical session - show input area but disable send until new request
+            inputArea.style.display = '';
+            sendBtn.disabled = !pendingSessionId;
+        } else {
+            inputArea.style.display = '';
+            sendBtn.disabled = true;
+        }
+    }
+    
+    function renderTabBar() {
+        if (!tabBarScroll) return;
+        
+        if (tabs.length === 0) {
+            tabBarScroll.innerHTML = '<div class="tab-bar-empty">No conversations yet</div>';
+            return;
+        }
+        
+        tabBarScroll.innerHTML = '';
+        
+        // Sort: active (pending) tabs first, then by lastTimestamp descending
+        const sorted = [...tabs].sort((a, b) => {
+            if (a.pendingSessionId && !b.pendingSessionId) return -1;
+            if (!a.pendingSessionId && b.pendingSessionId) return 1;
+            return (b.lastTimestamp || '').localeCompare(a.lastTimestamp || '');
+        });
+        
+        for (const tab of sorted) {
+            const item = document.createElement('div');
+            item.className = 'tab-item' + (tab.agent_name === activeTabAgent ? ' active' : '');
+            
+            // Title
+            const title = document.createElement('span');
+            title.className = 'tab-item-title';
+            title.textContent = tab.agent_name || 'Agent';
+            title.title = tab.agent_name || 'Agent';
+            item.appendChild(title);
+            
+            // Pending indicator
+            if (tab.pendingSessionId) {
+                const indicator = document.createElement('span');
+                indicator.className = 'tab-item-indicator';
+                indicator.title = 'Waiting for response';
+                item.appendChild(indicator);
+            } else if (tab.hasUnread) {
+                const unread = document.createElement('span');
+                unread.className = 'tab-item-unread';
+                item.appendChild(unread);
+            }
+            
+            // Close button (only for tabs without pending sessions)
+            if (!tab.pendingSessionId) {
+                const close = document.createElement('span');
+                close.className = 'tab-item-close';
+                close.textContent = '×';
+                close.title = 'Close';
+                close.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    closeTab(tab.agent_name);
+                });
+                item.appendChild(close);
+            }
+            
+            item.addEventListener('click', () => {
+                if (activeTabAgent !== tab.agent_name) {
+                    switchTab(tab.agent_name);
+                }
+            });
+            
+            tabBarScroll.appendChild(item);
+        }
+        
+        // Scroll active tab into view
+        const activeEl = tabBarScroll.querySelector('.tab-item.active');
+        if (activeEl) {
+            activeEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'nearest' });
+        }
+    }
+    
+    // Per-tab message caching
+    const TAB_CACHE_PREFIX = 'mcp-tab-msgs-';
+    
+    function saveCachedMessages(agentName, msgs) {
+        try {
+            const key = TAB_CACHE_PREFIX + agentName.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+            localStorage.setItem(key, JSON.stringify(msgs.slice(-50)));
+        } catch (e) {}
+    }
+    
+    function loadCachedMessages(agentName) {
+        try {
+            const key = TAB_CACHE_PREFIX + agentName.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+            const stored = localStorage.getItem(key);
+            return stored ? JSON.parse(stored) : [];
+        } catch (e) { return []; }
+    }
+    
+    function clearCachedMessages(agentName) {
+        try {
+            const key = TAB_CACHE_PREFIX + agentName.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+            localStorage.removeItem(key);
+        } catch (e) {}
+    }
+    
+    // Tab state persistence
+    const TAB_STATE_KEY = 'mcp-feedback-tabs-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+    
+    function saveTabState() {
+        try {
+            const state = {
+                tabs: tabs.map(t => ({
+                    agent_name: t.agent_name,
+                    lastTimestamp: t.lastTimestamp,
+                    pendingSessionId: t.pendingSessionId || null,
+                    hasUnread: t.hasUnread || false
+                })),
+                activeTabAgent: activeTabAgent
+            };
+            localStorage.setItem(TAB_STATE_KEY, JSON.stringify(state));
+        } catch (e) {}
+    }
+    
+    function loadTabState() {
+        try {
+            const stored = localStorage.getItem(TAB_STATE_KEY);
+            if (stored) {
+                const state = JSON.parse(stored);
+                if (state.tabs) {
+                    for (const t of state.tabs) {
+                        ensureTab(t.agent_name, {
+                            lastTimestamp: t.lastTimestamp,
+                            pendingSessionId: t.pendingSessionId || null,
+                            hasUnread: t.hasUnread || false
+                        });
+                    }
+                }
+                if (state.activeTabAgent) {
+                    activeTabAgent = state.activeTabAgent;
+                }
+            }
+        } catch (e) {}
+    }
     
     // Hot-reload WebSocket connection
     function connectHotReload() {
@@ -1237,6 +1618,9 @@ function getScript() {
                     projectPath: PROJECT_PATH,
                     sessionId: SESSION_ID
                 }));
+                
+                // Request sessions list to populate tabs
+                ws.send(JSON.stringify({ type: 'get_sessions' }));
             };
             
             ws.onmessage = (e) => {
@@ -1285,36 +1669,62 @@ function getScript() {
                 
             case 'session_updated':
                 const info = msg.session_info;
-                pendingSessionId = info.session_id;
+                const agentName = info.agent_name || 'Agent';
                 
-                messages.push({
-                    role: 'ai',
-                    content: info.summary,
-                    timestamp: new Date().toISOString(),
-                    session_id: info.session_id,
-                    pending: true
+                // Ensure tab exists for this agent
+                const updatedTab = ensureTab(agentName, {
+                    pendingSessionId: info.session_id,
+                    lastTimestamp: new Date().toISOString()
                 });
                 
-                saveHistory();
-                render();
+                if (activeTabAgent === agentName) {
+                    // Current tab - add message directly
+                    pendingSessionId = info.session_id;
+                    messages.push({
+                        role: 'ai',
+                        content: info.summary,
+                        timestamp: new Date().toISOString(),
+                        session_id: info.session_id,
+                        agent_name: agentName,
+                        pending: true
+                    });
+                    saveHistory();
+                    render();
+                    updateInputVisibility();
+                } else {
+                    // Different tab - mark as unread, cache the message
+                    updatedTab.hasUnread = true;
+                    const cachedMsgs = loadCachedMessages(agentName);
+                    cachedMsgs.push({
+                        role: 'ai',
+                        content: info.summary,
+                        timestamp: new Date().toISOString(),
+                        session_id: info.session_id,
+                        agent_name: agentName,
+                        pending: true
+                    });
+                    saveCachedMessages(agentName, cachedMsgs);
+                    
+                    // Auto-switch to the new request tab
+                    switchTab(agentName);
+                }
                 
-                // Request focus (no sound/notification - they block the input)
+                renderTabBar();
+                saveTabState();
+                
+                // Request focus
                 vscode.postMessage({ type: 'new-session' });
                 
                 // Auto-reply if enabled and has text
                 if (autoReplyEnabled && autoReplyText.value.trim()) {
                     const replyText = autoReplyText.value.trim();
-                    console.log('[MCP Feedback] Auto-reply triggered:', replyText);
-                    // Small delay to ensure UI is updated and user can see the AI message
                     setTimeout(() => {
                         if (pendingSessionId) {
                             submitFeedback(replyText);
                         }
                     }, 500);
                 } else if (pendingComment) {
-                    // Pending comment - send and clear
                     const textToSend = pendingComment;
-                    console.log('[MCP Feedback] Pending comment triggered:', textToSend);
                     setTimeout(() => {
                         if (pendingSessionId) {
                             submitFeedback(textToSend);
@@ -1333,6 +1743,15 @@ function getScript() {
                     pendingSessionId = null;
                     saveHistory();
                     render();
+                    
+                    // Update tab state
+                    const submittedTab = findTab(activeTabAgent);
+                    if (submittedTab && submittedTab.pendingSessionId === msg.session_id) {
+                        submittedTab.pendingSessionId = null;
+                    }
+                    renderTabBar();
+                    updateInputVisibility();
+                    saveTabState();
                 }
                 break;
                 
@@ -1364,6 +1783,74 @@ function getScript() {
                     render();
                     console.log('[MCP Feedback] Rendered', messages.length, 'messages');
                 }
+                // Associate messages with active tab
+                if (activeTabAgent) {
+                    saveCachedMessages(activeTabAgent, messages);
+                    // Restore pending session state from tab
+                    const tab = findTab(activeTabAgent);
+                    if (tab && tab.pendingSessionId) {
+                        pendingSessionId = tab.pendingSessionId;
+                    }
+                }
+                updateInputVisibility();
+                renderTabBar();
+                break;
+                
+            case 'sessions_list':
+                const serverSessions = msg.sessions || [];
+                for (const s of serverSessions) {
+                    ensureTab(s.agent_name, {
+                        lastTimestamp: s.last_timestamp
+                    });
+                }
+                renderTabBar();
+                
+                // If no active tab, switch to the most recent one
+                if (!activeTabAgent && tabs.length > 0) {
+                    const mostRecent = tabs.reduce((a, b) => 
+                        (a.lastTimestamp || '') > (b.lastTimestamp || '') ? a : b
+                    );
+                    switchTab(mostRecent.agent_name);
+                }
+                saveTabState();
+                break;
+                
+            case 'session_loaded':
+                if (msg.agent_name === activeTabAgent) {
+                    messages = [];
+                    if (msg.messages && msg.messages.length > 0) {
+                        for (const m of msg.messages) {
+                            messages.push({
+                                role: m.role,
+                                content: m.content,
+                                timestamp: m.timestamp,
+                                images: m.images,
+                                agent_name: m.agent_name,
+                                pending: false
+                            });
+                        }
+                    } else if (msg.sessions && msg.sessions.length > 0) {
+                        for (const s of msg.sessions) {
+                            messages.push({ role: 'ai', content: s.summary, timestamp: s.timestamp, pending: false });
+                            if (s.feedback) {
+                                messages.push({ role: 'user', content: s.feedback, timestamp: s.timestamp, images: s.images, pending: false });
+                            }
+                        }
+                    }
+                    
+                    // Check if there's a pending session for this tab
+                    const loadedTab = findTab(activeTabAgent);
+                    if (loadedTab && loadedTab.pendingSessionId) {
+                        pendingSessionId = loadedTab.pendingSessionId;
+                        // Mark the last AI message as pending if session is active
+                        const lastAi = messages.filter(m => m.role === 'ai').pop();
+                        if (lastAi) lastAi.pending = true;
+                    }
+                    
+                    saveCachedMessages(activeTabAgent, messages);
+                    render();
+                    updateInputVisibility();
+                }
                 break;
                 
             case 'pong':
@@ -1375,17 +1862,18 @@ function getScript() {
     function submitFeedback(text) {
         if (!pendingSessionId || !ws || ws.readyState !== WebSocket.OPEN) return;
         
-        // Append enabled rules to feedback
+        // Append enabled rules as Hidden HTML Comment (Visible to LLM, Hidden in UI)
         const enabledRules = rules.filter(r => r.enabled);
         let feedbackText = text;
+        
         if (enabledRules.length > 0) {
-            const rulesText = enabledRules.map((r, i) => (i + 1) + '.' + r.content).join(' ');
-            feedbackText = text + '\\n\\n请始终遵守以下rules: ' + rulesText;
+            const rulesText = enabledRules.map((r, i) => (i + 1) + '. ' + r.content).join('\n');
+            feedbackText = text + '\n\n<!--\n[SYSTEM RULES - HIDDEN FROM CHAT HISTORY]\n请始终遵守以下rules:\n' + rulesText + '\n-->';
         }
         
         messages.push({
             role: 'user',
-            content: feedbackText,
+            content: text, // Only show pure user text in the panel history
             timestamp: new Date().toISOString()
         });
         
@@ -1402,6 +1890,16 @@ function getScript() {
         pendingSessionId = null;
         input.value = '';
         try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+        
+        // Update tab state after submission
+        const currentTab = findTab(activeTabAgent);
+        if (currentTab) {
+            currentTab.pendingSessionId = null;
+        }
+        renderTabBar();
+        updateInputVisibility();
+        saveTabState();
+        saveCachedMessages(activeTabAgent, messages);
         saveHistory();
         render();
     }
@@ -1522,7 +2020,7 @@ function getScript() {
         }
         
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
-        sendBtn.disabled = !pendingSessionId;
+        updateInputVisibility();
     }
     
     function formatTime(iso) {
@@ -1535,17 +2033,20 @@ function getScript() {
     }
     
     function loadHistory() {
-        try {
-            const stored = localStorage.getItem(STORAGE_KEY);
-            if (stored) {
-                messages = JSON.parse(stored);
-                const lastAi = messages.filter(m => m.role === 'ai').pop();
-                if (lastAi && lastAi.pending) {
-                    pendingSessionId = lastAi.session_id || null;
+        // Legacy support - load from old storage key if no active tab
+        if (!activeTabAgent) {
+            try {
+                const stored = localStorage.getItem(STORAGE_KEY);
+                if (stored) {
+                    messages = JSON.parse(stored);
+                    const lastAi = messages.filter(m => m.role === 'ai').pop();
+                    if (lastAi && lastAi.pending) {
+                        pendingSessionId = lastAi.session_id || null;
+                    }
                 }
+            } catch (e) {
+                console.error('[MCP Feedback] Load history error:', e);
             }
-        } catch (e) {
-            console.error('[MCP Feedback] Load history error:', e);
         }
     }
     
@@ -1578,6 +2079,12 @@ function getScript() {
                 break;
         }
     });
+    
+    // Initialize
+    loadQuickReplies();
+    loadRules();
+    loadHistory();
+    connect();
 })();
 `;
 }

@@ -229,6 +229,67 @@ export async function activate(context: vscode.ExtensionContext) {
     });
 
     console.log('[MCP Feedback] Extension activation complete');
+
+    // Auto-configure MCP server
+    ensureMcpConfig();
+}
+
+/**
+ * Ensure MCP server is configured in ~/.cursor/mcp.json
+ */
+async function ensureMcpConfig(): Promise<void> {
+    try {
+        const os = require('os');
+        const fs = require('fs');
+        const path = require('path');
+
+        const mcpConfigPath = path.join(os.homedir(), '.cursor', 'mcp.json');
+
+        let config: any = { mcpServers: {} };
+
+        // Read existing config
+        if (fs.existsSync(mcpConfigPath)) {
+            try {
+                const content = fs.readFileSync(mcpConfigPath, 'utf-8');
+                config = JSON.parse(content);
+                if (!config.mcpServers) {
+                    config.mcpServers = {};
+                }
+            } catch (e) {
+                console.error('[MCP Feedback] Failed to parse mcp.json:', e);
+                return; // Don't overwrite if we can't parse
+            }
+        }
+
+        // Check if our server is already configured
+        if (config.mcpServers['mcp-feedback-enhanced']) {
+            console.log('[MCP Feedback] MCP server already configured');
+            return;
+        }
+
+        // Add our server configuration
+        config.mcpServers['mcp-feedback-enhanced'] = {
+            command: 'npx',
+            args: ['-y', 'mcp-feedback-enhanced@latest'],
+            timeout: 86400,
+            autoApprove: ['interactive_feedback']
+        };
+
+        // Ensure .cursor directory exists
+        const cursorDir = path.join(os.homedir(), '.cursor');
+        if (!fs.existsSync(cursorDir)) {
+            fs.mkdirSync(cursorDir, { recursive: true });
+        }
+
+        // Write config
+        fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 4), 'utf-8');
+
+        console.log('[MCP Feedback] Auto-configured MCP server in ~/.cursor/mcp.json');
+        vscode.window.showInformationMessage('MCP Feedback Enhanced: MCP server auto-configured ✓');
+
+    } catch (e) {
+        console.error('[MCP Feedback] Failed to auto-configure MCP:', e);
+    }
 }
 
 /**

@@ -20,6 +20,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
     private _disposables: vscode.Disposable[] = [];
     private _onForceReset: (() => Promise<number | void>) | null = null;
     private _onPendingUpdate: ((value: string) => void) | null = null;
+    private _onRulesUpdate: ((rules: string[]) => void) | null = null;
 
     private _fileWatcher: fs.FSWatcher | null = null;
 
@@ -38,6 +39,13 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
      */
     onPendingUpdate(callback: (value: string) => void): void {
         this._onPendingUpdate = callback;
+    }
+
+    /**
+     * Set callback for active rules updates
+     */
+    onRulesUpdate(callback: (rules: string[]) => void): void {
+        this._onRulesUpdate = callback;
     }
 
     /**
@@ -251,6 +259,13 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                 // Sync pending comment to extension host
                 if (this._onPendingUpdate) {
                     this._onPendingUpdate(message.value);
+                }
+                break;
+
+            case 'rules-update':
+                // Sync active rules to extension host
+                if (this._onRulesUpdate) {
+                    this._onRulesUpdate(message.rules);
                 }
                 break;
 

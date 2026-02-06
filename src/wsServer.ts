@@ -42,6 +42,7 @@ interface HistoryMessage {
     images?: string[];
     workspace?: string;      // Current workspace path
     project_directory?: string;  // MCP call's project_directory
+    agent_name?: string;
 }
 
 interface SessionRecord {
@@ -55,6 +56,7 @@ interface PendingFeedback {
     sessionId: string;
     summary: string;
     projectPath: string;
+    agentName: string;
     clientWs: WebSocket.WebSocket;  // Store reference to MCP Server WebSocket
     resolve: (result: any) => void;
     reject: (error: any) => void;
@@ -476,6 +478,10 @@ export class FeedbackWebSocketServer {
                     const messages = this._loadHistory(client.projectPath);
                     const sessions = this._toSessionRecords(messages);
                     this._send(ws, { type: 'history', sessions });
+
+                    // Send session list for history panel
+                    const sessionList = this._listSessions(client.projectPath);
+                    this._send(ws, { type: 'sessions_list', sessions: sessionList });
                 }
 
                 // Notify status
@@ -500,6 +506,26 @@ export class FeedbackWebSocketServer {
                     const messages = this._loadHistory(client.projectPath);
                     const sessions = this._toSessionRecords(messages);
                     this._send(ws, { type: 'history', sessions });
+                }
+                break;
+
+            case 'get_sessions':
+                if (client.projectPath) {
+                    const sessionList = this._listSessions(client.projectPath);
+                    this._send(ws, { type: 'sessions_list', sessions: sessionList });
+                }
+                break;
+
+            case 'load_session':
+                if (client.projectPath && message.agent_name) {
+                    const sessionMessages = this._loadSessionByAgent(client.projectPath, message.agent_name);
+                    const sessionRecords = this._toSessionRecords(sessionMessages);
+                    this._send(ws, {
+                        type: 'session_loaded',
+                        agent_name: message.agent_name,
+                        sessions: sessionRecords,
+                        messages: sessionMessages
+                    });
                 }
                 break;
 
@@ -550,7 +576,7 @@ export class FeedbackWebSocketServer {
             role: 'ai',
             content: summary,
             timestamp: new Date().toISOString()
-        }, project_directory);
+        }, project_directory, agent_name || 'Agent');
 
         if (webviews.length === 0) {
             // No webview connected - send error back to MCP Server
@@ -577,7 +603,7 @@ export class FeedbackWebSocketServer {
         console.log(`[MCP Feedback WS] Broadcast to ${webviews.length} webview(s)`);
 
         // Store pending feedback with timeout
-        const timeoutMs = (timeout || 600) * 1000;
+        const timeoutMs = (timeout || 86400) * 1000;
         const timeoutHandle = setTimeout(() => {
             const pending = this._pendingFeedback.get(session_id);
             if (pending) {
@@ -590,6 +616,7 @@ export class FeedbackWebSocketServer {
             sessionId: session_id,
             summary,
             projectPath: project_directory,
+            agentName: agent_name || 'Agent',
             clientWs: client.ws,
             resolve: (result) => {
                 // Check if MCP Server connection is still alive
@@ -642,7 +669,7 @@ export class FeedbackWebSocketServer {
                 content: feedback,
                 timestamp: new Date().toISOString(),
                 images
-            }, projectDirectory);  // Pass project_directory as second param
+            }, projectDirectory, pending?.agentName);  // Pass project_directory as second param and agentName as fourth
         }
 
         // Notify all webviews that feedback was submitted (for multi-panel sync)
@@ -764,6 +791,14 @@ export class FeedbackWebSocketServer {
                 CREATE INDEX IF NOT EXISTS idx_project_directory ON history(project_directory);
             `);
 
+            // Migration: add agent_name column
+            try {
+                this._db.exec(`ALTER TABLE history ADD COLUMN agent_name TEXT DEFAULT 'Agent'`);
+                this._db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_name ON history(agent_name)`);
+            } catch (e) {
+                // Column already exists, ignore
+            }
+
             console.log(`[MCP Feedback WS] SQLite database initialized: ${FeedbackWebSocketServer.DB_FILE}`);
             return this._db;
         } catch (e) {
@@ -789,7 +824,7 @@ export class FeedbackWebSocketServer {
         try {
             const db = this._getDb();
             const stmt = db.prepare(`
-                SELECT role, content, timestamp, images, workspace, project_directory
+                SELECT role, content, timestamp, images, workspace, project_directory, agent_name
                 FROM history
                 WHERE workspace = ? OR project_directory = ?
                 ORDER BY id ASC
@@ -804,10 +839,85 @@ export class FeedbackWebSocketServer {
                 timestamp: row.timestamp,
                 images: row.images ? JSON.parse(row.images) : undefined,
                 workspace: row.workspace,
-                project_directory: row.project_directory
+                project_directory: row.project_directory,
+                agent_name: row.agent_name
             }));
         } catch (e) {
             console.error(`[MCP Feedback WS] Failed to load history: ${e}`);
+            return [];
+        }
+    }
+
+    /**
+     * List distinct sessions grouped by agent_name
+     */
+    private _listSessions(workspace: string): any[] {
+        try {
+            const db = this._getDb();
+            const stmt = db.prepare(`
+                SELECT 
+                    agent_name,
+                    COUNT(*) as message_count,
+                    MAX(timestamp) as last_timestamp,
+                    MIN(CASE WHEN role = 'ai' THEN timestamp END) as first_timestamp
+                FROM history
+                WHERE workspace = ? OR project_directory = ?
+                GROUP BY agent_name
+                ORDER BY MAX(created_at) DESC
+            `);
+
+            const sessions = stmt.all(workspace, workspace) as any[];
+
+            // Get the last AI summary for each session as preview
+            const previewStmt = db.prepare(`
+                SELECT content FROM history 
+                WHERE (workspace = ? OR project_directory = ?) AND agent_name = ? AND role = 'ai'
+                ORDER BY id DESC LIMIT 1
+            `);
+
+            return sessions.map(s => {
+                const preview = previewStmt.get(workspace, workspace, s.agent_name) as any;
+                return {
+                    agent_name: s.agent_name,
+                    message_count: s.message_count,
+                    last_timestamp: s.last_timestamp,
+                    first_timestamp: s.first_timestamp,
+                    preview: preview ? preview.content.substring(0, 100) : ''
+                };
+            });
+        } catch (e) {
+            console.error(`[MCP Feedback WS] Failed to list sessions: ${e}`);
+            return [];
+        }
+    }
+
+    /**
+     * Load history messages for a specific agent_name session
+     */
+    private _loadSessionByAgent(workspace: string, agentName: string): HistoryMessage[] {
+        try {
+            const db = this._getDb();
+            const stmt = db.prepare(`
+                SELECT role, content, timestamp, images, workspace, project_directory, agent_name
+                FROM history
+                WHERE (workspace = ? OR project_directory = ?) AND agent_name = ?
+                ORDER BY id ASC
+                LIMIT ?
+            `);
+
+            const rows = stmt.all(workspace, workspace, agentName, MAX_HISTORY_MESSAGES * 2) as any[];
+
+            return rows.map(row => ({
+                role: row.role as 'ai' | 'user',
+                content: row.content,
+                timestamp: row.timestamp,
+                images: row.images ? JSON.parse(row.images) : undefined,
+                workspace: row.workspace,
+                project_directory: row.project_directory,
+                agent_name: row.agent_name
+            }));
+        } catch (e) {
+            console.error(`[MCP Feedback WS] Failed to load session by agent: ${e}`);
             return [];
         }
     }
@@ -849,12 +959,12 @@ export class FeedbackWebSocketServer {
     /**
      * Add message to history
      */
-    private _addToHistory(workspace: string, message: HistoryMessage, projectDirectory?: string): void {
+    private _addToHistory(workspace: string, message: HistoryMessage, projectDirectory?: string, agentName?: string): void {
         try {
             const db = this._getDb();
             const stmt = db.prepare(`
-                INSERT INTO history (role, content, timestamp, images, workspace, project_directory)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO history (role, content, timestamp, images, workspace, project_directory, agent_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
             `);
 
             stmt.run(
@@ -863,7 +973,8 @@ export class FeedbackWebSocketServer {
                 message.timestamp,
                 message.images ? JSON.stringify(message.images) : null,
                 workspace,
-                projectDirectory || null
+                projectDirectory || null,
+                agentName || 'Agent'
             );
 
             // Cleanup old records (keep last N * 3 globally)

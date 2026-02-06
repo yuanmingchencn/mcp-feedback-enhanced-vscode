@@ -60,6 +60,7 @@ let pendingFeedbackResolvers: Map<string, {
     reject: (error: any) => void;
     timeout: NodeJS.Timeout;
 }> = new Map();
+let cachedAgentName: string | null = null;
 
 /**
  * Check if a port is actually accepting connections
@@ -508,6 +509,24 @@ async function requestFeedback(
 
     const sessionId = `session_${Date.now()}_${Math.random().toString(36).substring(2, 11)}`;
 
+    // Auto-generate agent_name from summary if not provided
+    let effectiveAgentName = agentName;
+    if (!effectiveAgentName || effectiveAgentName === 'Agent') {
+        if (cachedAgentName) {
+            effectiveAgentName = cachedAgentName;
+        } else {
+            // Generate from summary: take first meaningful line, limit to 50 chars
+            const firstLine = summary.split('\n').find(l => l.trim().length > 0) || summary;
+            const cleaned = firstLine.replace(/^[#*\->\s]+/, '').trim();
+            effectiveAgentName = cleaned.length > 50 ? cleaned.substring(0, 47) + '...' : cleaned;
+            if (!effectiveAgentName) effectiveAgentName = 'Agent';
+            cachedAgentName = effectiveAgentName;
+        }
+    } else {
+        // Cache the explicitly provided name
+        cachedAgentName = effectiveAgentName;
+    }
+
     return new Promise((resolve, reject) => {
         // Set timeout
         const timeoutHandle = setTimeout(() => {
@@ -529,10 +548,10 @@ async function requestFeedback(
             project_directory: projectDirectory,
             summary,
             timeout,
-            agent_name: agentName  // For multi-agent display
+            agent_name: effectiveAgentName  // For multi-agent display
         }));
 
-        debug(`Feedback request sent: session=${sessionId}, agent=${agentName || 'default'}`);
+        debug(`Feedback request sent: session=${sessionId}, agent=${effectiveAgentName || 'default'}`);
     });
 }
 
@@ -910,14 +929,14 @@ server.tool(
     {
         project_directory: z.string().describe('The project directory path for context'),
         summary: z.string().describe('Summary of AI work completed for user review'),
-        timeout: z.number().optional().default(600).describe('Timeout in seconds (default: 600)'),
-        agent_name: z.string().optional().describe('Unique identifier for this agent/chat session. Use a stable name like the chat title or task description (e.g. "Chat 1", "Pre-credit Implementation", "Bug Fix #123"). If not provided, defaults to "Agent" and all messages will appear in the same tab. Providing a unique name allows multiple agents to have separate conversation tabs.')
+        timeout: z.number().optional().default(86400).describe('Timeout in seconds (default: 86400 = 24 hours)'),
+        agent_name: z.string().optional().describe('Unique identifier for this agent/chat session. You MUST provide this parameter with your current conversation/chat title or a short descriptive name of the task (e.g. "Chat 1", "Pre-credit Implementation", "Bug Fix #123"). If not provided, defaults to "Agent" and all messages will appear in the same tab. Providing a unique name allows multiple agents to have separate conversation tabs.')
     },
     async ({ project_directory, summary, timeout, agent_name }) => {
         debug(`interactive_feedback called: project=${project_directory}, agent=${agent_name || 'default'}`);
 
         try {
-            const result = await requestFeedback(project_directory, summary, timeout || 600, agent_name);
+            const result = await requestFeedback(project_directory, summary, timeout || 86400, agent_name);
 
             // Build content array with text and images
             const content: any[] = [{ type: 'text', text: `User Feedback:\n${result.feedback}` }];
