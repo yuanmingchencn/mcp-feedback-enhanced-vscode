@@ -46,7 +46,6 @@ ${getStyles()}
             <button class="status-btn" id="searchBtn" title="Search messages">🔍</button>
             <button class="status-btn" id="reloadBtn" title="Reload Panel">🔄</button>
             <button class="status-btn" id="historyBtn" title="Session History">📋</button>
-            <button class="status-btn" id="historyBtn" title="Session History">📋</button>
             <button class="status-btn settings-toggle" id="settingsToggle" title="Settings">⚙️</button>
         </div>
         
@@ -1628,19 +1627,25 @@ function getScript() {
         }
     });
     
+    let connectionUrl = SERVER_URL;
+    let fallbackAttempted = false;
+
     function connect() {
         if (ws && ws.readyState === WebSocket.OPEN) return;
         
-        updateStatus('connecting', 'Connecting...');
+        // Show actual URL we are trying
+        const host = connectionUrl.includes('127.0.0.1') ? '127.0.0.1' : 'localhost';
+        updateStatus('connecting', 'Connecting to ' + host + '...');
         
         try {
-            ws = new WebSocket(SERVER_URL);
+            ws = new WebSocket(connectionUrl);
             
             ws.onopen = () => {
-                console.log('[MCP Feedback] Connected to', SERVER_URL);
+                console.log('[MCP Feedback] Connected to', connectionUrl);
                 reconnectAttempts = 0;
-                // Extract port from URL and show in status
-                const portMatch = SERVER_URL.match(/:(\\d+)/);
+                fallbackAttempted = false; 
+                
+                const portMatch = connectionUrl.match(/:(\d+)/);
                 const port = portMatch ? portMatch[1] : '?';
                 updateStatus('connected', 'Connected :' + port);
                 
@@ -1651,7 +1656,6 @@ function getScript() {
                     sessionId: SESSION_ID
                 }));
                 
-                // Request sessions list to populate tabs
                 ws.send(JSON.stringify({ type: 'get_sessions' }));
             };
             
@@ -1664,18 +1668,35 @@ function getScript() {
                 }
             };
             
-            ws.onclose = () => {
-                console.log('[MCP Feedback] Disconnected');
-                updateStatus('disconnected', 'Disconnected');
+            ws.onclose = (e) => {
+                console.log('[MCP Feedback] Disconnected', e.code, e.reason);
+                updateStatus('disconnected', 'Disconnected (' + e.code + ')');
                 scheduleReconnect();
             };
             
             ws.onerror = (err) => {
                 console.error('[MCP Feedback] WebSocket error:', err);
+                // If this is the first immediate error, try switching host
+                if (!fallbackAttempted && reconnectAttempts === 0) {
+                    console.log('[MCP Feedback] Connection failed, trying fallback host...');
+                    fallbackAttempted = true;
+                    if (connectionUrl.includes('127.0.0.1')) {
+                        connectionUrl = connectionUrl.replace('127.0.0.1', 'localhost');
+                    } else {
+                        connectionUrl = connectionUrl.replace('localhost', '127.0.0.1');
+                    }
+                    // Retrying immediately
+                    ws = null;
+                    connect(); 
+                    return;
+                }
+                
+                updateStatus('error', 'Conn Err: ' + (typeof err === 'object' ? 'Failed' : err));
             };
             
         } catch (err) {
             console.error('[MCP Feedback] Connect error:', err);
+            updateStatus('error', 'Init Err: ' + err.message);
             scheduleReconnect();
         }
     }
