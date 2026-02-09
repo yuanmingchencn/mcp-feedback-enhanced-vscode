@@ -7,6 +7,8 @@ Connects your AI Agent (via MCP) to a rich, native sidebar interface for solicit
 ## ✨ Features
 
 - **💬 Rich Feedback UI**: Dedicated sidebar panel with history, markdown support, and quick replies.
+- **🛠️ Robust Connection**: Auto-reconnects with fallback strategies (localhost/127.0.0.1) and clear status indicators.
+- **📥 Pending Queue**: Queue multiple feedback items even when no session is active.
 - **🔄 Auto-Configuration**: Automatically sets up the MCP server in `~/.cursor/mcp.json` upon installation.
 - **🧠 Hidden Rules**: Active rules are injected into the AI context invisibly, keeping your chat clean.
 - **⚡ Real-time**: WebSocket-based communication for instant interaction.

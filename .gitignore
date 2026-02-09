@@ -17,6 +17,9 @@ mcp-server/dist/
 .DS_Store
 Thumbs.db
 
+# Publish secrets
+.env.publish
+
 # Logs
 *.log
 npm-debug.log*

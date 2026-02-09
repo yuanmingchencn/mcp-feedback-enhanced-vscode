@@ -18,6 +18,8 @@ const VERSION = packageJson.version || '0.0.0';
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 const HISTORY_DIR = path.join(CONFIG_DIR, 'history');
+const HOOKS_DIR = path.join(CONFIG_DIR, 'hooks');
+const PENDING_FILE = path.join(CONFIG_DIR, 'pending.json');
 const DEFAULT_PORT = 8765;
 const MAX_PORT_RANGE = 100;       // Search 100 ports for available one
 const MAX_HISTORY_MESSAGES = 100; // Keep last 100 messages per project
@@ -128,6 +130,7 @@ export class FeedbackWebSocketServer {
 
     /**
      * Update pending comment for a project (from Webview changes)
+     * Also writes to file for Cursor Hooks to read.
      */
     updatePendingComment(projectPath: string, comment: string): void {
         if (comment) {
@@ -135,6 +138,30 @@ export class FeedbackWebSocketServer {
         } else {
             this._pendingComments.delete(projectPath);
         }
+        this._writePendingToFile();
+    }
+
+    /**
+     * Write all pending comments to a shared file for Cursor Hooks.
+     */
+    private _writePendingToFile(): void {
+        try {
+            const data: Record<string, { comment: string; timestamp: number }> = {};
+            for (const [projectPath, comment] of this._pendingComments.entries()) {
+                data[projectPath] = { comment, timestamp: Date.now() };
+            }
+            fs.writeFileSync(PENDING_FILE, JSON.stringify(data, null, 2));
+        } catch (e) {
+            console.error('[MCP Feedback WS] Failed to write pending file:', e);
+        }
+    }
+
+    static getPendingFilePath(): string {
+        return PENDING_FILE;
+    }
+
+    static getHooksDir(): string {
+        return HOOKS_DIR;
     }
 
     /**
@@ -165,6 +192,9 @@ export class FeedbackWebSocketServer {
         }
         if (!fs.existsSync(HISTORY_DIR)) {
             fs.mkdirSync(HISTORY_DIR, { recursive: true });
+        }
+        if (!fs.existsSync(HOOKS_DIR)) {
+            fs.mkdirSync(HOOKS_DIR, { recursive: true });
         }
         // Clean up stale server files on startup
         this._cleanupStaleServers();

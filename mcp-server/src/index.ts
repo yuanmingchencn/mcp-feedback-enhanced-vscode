@@ -209,10 +209,28 @@ async function findExtensionForProjectAsync(projectPath: string): Promise<Server
 
     // Strategy 0: CURSOR_TRACE_ID match (HIGHEST PRIORITY - same Cursor window)
     if (myTraceId) {
-        const traceMatch = servers.find(s => s.cursorTraceId === myTraceId);
-        if (traceMatch) {
-            debug(`✓ CURSOR_TRACE_ID match: port=${traceMatch.port}, traceId=${myTraceId}`);
-            return traceMatch;
+        const traceMatches = servers.filter(s => s.cursorTraceId === myTraceId);
+        if (traceMatches.length === 1) {
+            debug(`✓ Strategy 0: Single CURSOR_TRACE_ID match: port=${traceMatches[0].port}, pid=${traceMatches[0].pid}`);
+            return traceMatches[0];
+        } else if (traceMatches.length > 1) {
+            // Multiple windows share same CURSOR_TRACE_ID - also check workspace
+            debug(`  Strategy 0: Multiple CURSOR_TRACE_ID matches (${traceMatches.length}), checking workspace...`);
+            const normalizedProject = projectPath.replace(/\/+$/, '');
+            const workspaceMatch = traceMatches.find(s =>
+                s.workspaces?.some((w: string) => {
+                    const normalizedW = w.replace(/\/+$/, '');
+                    return normalizedW === normalizedProject || 
+                           normalizedProject.startsWith(normalizedW + '/') || 
+                           normalizedW.startsWith(normalizedProject + '/');
+                })
+            );
+            if (workspaceMatch) {
+                debug(`✓ Strategy 0: CURSOR_TRACE_ID + workspace match: port=${workspaceMatch.port}, pid=${workspaceMatch.pid}`);
+                return workspaceMatch;
+            }
+            // No workspace match among trace matches - fall through to other strategies
+            debug(`  Strategy 0: No workspace match among trace ID matches, trying other strategies...`);
         }
     }
 
@@ -384,10 +402,15 @@ async function connectToExtension(projectPath: string): Promise<void> {
             connectedPort = null;
             ws = null;
 
-            // Only reject pending if we were previously connected (unexpected disconnect)
+            // Reject all pending feedback resolvers to prevent hanging forever
             if (wasConnected && pendingFeedbackResolvers.size > 0) {
-                debug(`Connection lost with ${pendingFeedbackResolvers.size} pending requests`);
-                // Don't reject immediately - the next feedback request will trigger reconnect
+                debug(`Connection lost with ${pendingFeedbackResolvers.size} pending requests - rejecting all`);
+                const error = new Error('Connection closed unexpectedly');
+                for (const [sessionId, resolver] of pendingFeedbackResolvers.entries()) {
+                    clearTimeout(resolver.timeout);
+                    resolver.reject(error);
+                }
+                pendingFeedbackResolvers.clear();
             }
         });
 
@@ -402,6 +425,8 @@ async function connectToExtension(projectPath: string): Promise<void> {
         setTimeout(() => {
             if (!isConnected) {
                 ws?.close();
+                ws = null;
+                isConnected = false;
                 reject(new Error(`Connection timeout to ${url}`));
             }
         }, CONNECTION_TIMEOUT_MS);
@@ -867,6 +892,9 @@ async function requestFeedbackViaBrowser(
                             const data = JSON.parse(body);
                             feedbackReceived = true;
 
+                            // Clear timeout since feedback was received successfully
+                            clearTimeout(timeoutHandle);
+
                             res.writeHead(200, { 'Content-Type': 'application/json' });
                             res.end(JSON.stringify({ success: true }));
 
@@ -935,36 +963,46 @@ server.tool(
     async ({ project_directory, summary, timeout, agent_name }) => {
         debug(`interactive_feedback called: project=${project_directory}, agent=${agent_name || 'default'}`);
 
+        const effectiveTimeout = timeout || 86400;
+        let result: { feedback: string; images: Array<{ name?: string; data: string }> };
+
         try {
-            const result = await requestFeedback(project_directory, summary, timeout || 86400, agent_name);
+            result = await requestFeedback(project_directory, summary, effectiveTimeout, agent_name);
+        } catch (error: any) {
+            // Panel feedback failed (connection lost, timeout, etc.)
+            // Always fall back to browser to avoid wasting the session
+            debug(`Panel feedback failed: ${error.message}, falling back to browser`);
+            try {
+                result = await requestFeedbackViaBrowser(project_directory, summary, effectiveTimeout);
+            } catch (browserError: any) {
+                // Both panel and browser failed - only then return error
+                debug(`Browser fallback also failed: ${browserError.message}`);
+                return {
+                    content: [{ type: 'text', text: `Error: Both panel and browser feedback failed. Panel: ${error.message}. Browser: ${browserError.message}` }],
+                    isError: true
+                };
+            }
+        }
 
-            // Build content array with text and images
-            const content: any[] = [{ type: 'text', text: `User Feedback:\n${result.feedback}` }];
+        // Build content array with text and images
+        const content: any[] = [{ type: 'text', text: `User Feedback:\n${result.feedback}` }];
 
-            // Add images as MCP image content items
-            if (result.images && result.images.length > 0) {
-                debug(`Processing ${result.images.length} image(s)`);
-                for (const img of result.images) {
-                    // img is { name: string, data: string (base64) }
-                    if (img && img.data) {
-                        content.push({
-                            type: 'image',
-                            data: img.data,
-                            mimeType: 'image/png'  // Default to PNG; could infer from name
-                        });
-                        debug(`Added image: ${img.name || 'unnamed'}`);
-                    }
+        // Add images as MCP image content items
+        if (result.images && result.images.length > 0) {
+            debug(`Processing ${result.images.length} image(s)`);
+            for (const img of result.images) {
+                if (img && img.data) {
+                    content.push({
+                        type: 'image',
+                        data: img.data,
+                        mimeType: 'image/png'
+                    });
+                    debug(`Added image: ${img.name || 'unnamed'}`);
                 }
             }
-
-            return { content };
-        } catch (error: any) {
-            debug(`Feedback error: ${error.message}`);
-            return {
-                content: [{ type: 'text', text: `Error: ${error.message}` }],
-                isError: true
-            };
         }
+
+        return { content };
     }
 );
 

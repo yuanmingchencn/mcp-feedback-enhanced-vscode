@@ -2,7 +2,7 @@
   "name": "mcp-feedback-enhanced",
   "displayName": "MCP Feedback Enhanced",
   "description": "Interactive feedback collection for AI assistants - integrates with Cursor/VSCode chat",
-  "version": "1.0.14",
+  "version": "1.2.2",
   "publisher": "mcp-feedback",
   "license": "MIT",
   "repository": {
@@ -113,8 +113,8 @@
     ]
   },
   "scripts": {
-    "vscode:prepublish": "node scripts/generate-webview.js --prod && npm run esbuild-base -- --minify && npm run verify",
-    "compile": "tsc -p ./ && node scripts/generate-webview.js && npm run esbuild && npm run verify",
+    "vscode:prepublish": "cd mcp-server && npm run build && cd .. && node scripts/generate-webview.js --prod && node scripts/validate-build.js && npm run esbuild-base -- --minify && npm run verify",
+    "compile": "cd mcp-server && npm run build && cd .. && tsc -p ./ && node scripts/generate-webview.js && node scripts/validate-build.js && npm run esbuild && npm run verify",
     "verify": "node -e \"const h=require('fs').readFileSync('out/webview/panel.html','utf8');const e=require('fs').readFileSync('out/extension.js','utf8');const checks=[];if(!h.includes('{{SERVER_URL}}'))checks.push('Missing SERVER_URL placeholder');if(!e.includes('retainContextWhenHidden:!1')&&!e.includes('retainContextWhenHidden: false'))checks.push('retainContextWhenHidden should be false');if(!e.includes('_loadWebviewHtml'))checks.push('Missing _loadWebviewHtml');if(checks.length){console.error('ERRORS:',checks.join(', '));process.exit(1)}console.log('Verify OK')\"",
     "dev": "node scripts/watch-reload.js",
     "rollback:list": "node scripts/rollback.js list",
@@ -126,7 +126,11 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "lint": "eslint src --ext ts",
-    "package": "vsce package"
+    "package": "vsce package",
+    "publish": "bash scripts/publish.sh",
+    "publish:patch": "bash scripts/publish.sh patch",
+    "publish:minor": "bash scripts/publish.sh minor",
+    "publish:major": "bash scripts/publish.sh major"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

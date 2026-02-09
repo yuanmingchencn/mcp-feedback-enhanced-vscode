@@ -14,6 +14,9 @@
 !mcp-server/package.json
 !mcp-server/README.md
 
+# Cursor Hooks script for real-time pending comment injection
+!scripts/hooks/check-pending.js
+
 # Exclude all source and dev files explicitly
 .vscode/**
 .vscode-test/**

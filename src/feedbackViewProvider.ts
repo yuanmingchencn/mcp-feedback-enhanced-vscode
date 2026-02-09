@@ -52,6 +52,10 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
      * Watch webview HTML file for hot-reload
      */
     private _watchWebviewFile(): void {
+        if (this._fileWatcher) {
+            this._fileWatcher.close();
+            this._fileWatcher = null;
+        }
         const htmlPath = this._getWebviewHtmlPath();
         if (!fs.existsSync(htmlPath)) {
             console.log(`[MCP Feedback] Webview HTML not found: ${htmlPath}`);
@@ -96,7 +100,8 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
         } catch (e) {
             console.error('[MCP Feedback] Failed to load HTML:', e);
             // Fallback to inline error message
-            return `<!DOCTYPE html><html><body><h1>Error loading webview</h1><p>${e}</p><p>Run: npm run compile</p></body></html>`;
+            const errorMsg = String(e).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            return `<!DOCTYPE html><html><body><h1>Error loading webview</h1><p>${errorMsg}</p><p>Run: npm run compile</p></body></html>`;
         }
     }
 
