@@ -355,10 +355,9 @@ function openFeedbackInEditor(context: vscode.ExtensionContext) {
 /**
  * Deploy Cursor Hooks for real-time pending comment injection.
  * 
- * Strategy: Configure 3 hooks for maximum coverage with minimal overhead:
+ * Strategy: Configure 2 hooks for maximum coverage with minimal overhead:
  * 1. stop - Auto-continue with pending comments when agent finishes (primary)
- * 2. beforeShellExecution - Inject via agent_message during shell commands
- * 3. beforeMCPExecution - Inject via agent_message during MCP tool calls
+ * 2. beforeMCPExecution - Inject via agent_message during MCP tool calls
  * 
  * These hooks read pending comments from a shared JSON file that the extension
  * writes to whenever the user submits a pending comment in the webview.
@@ -394,15 +393,13 @@ async function deployCursorHooks(context: vscode.ExtensionContext): Promise<void
         // Our hook command using absolute path
         const hookCommand = `node ${hookScriptDest}`;
 
-        // Define our hooks entries (4 injection points for maximum speed)
+        // Define our hooks entries (3 injection points)
         // - stop: Auto-continue with pending when agent finishes
         // - preToolUse: Deny tool with pending as reason (fastest mid-execution injection)
-        // - beforeShellExecution: Inject agent_message during shell commands
         // - beforeMCPExecution: Inject agent_message during MCP calls
         const ourHooks: Record<string, any[]> = {
             stop: [{ command: hookCommand, _source: 'mcp-feedback-enhanced' }],
             preToolUse: [{ command: hookCommand, _source: 'mcp-feedback-enhanced' }],
-            beforeShellExecution: [{ command: hookCommand, _source: 'mcp-feedback-enhanced' }],
             beforeMCPExecution: [{ command: hookCommand, _source: 'mcp-feedback-enhanced' }]
         };
 

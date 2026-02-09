@@ -6,9 +6,8 @@
  * and configured in ~/.cursor/hooks.json to inject pending user comments into
  * the agent's context as fast as possible.
  * 
- * Supported hooks (4 injection points):
+ * Supported hooks (3 injection points):
  * - stop: Returns followup_message to auto-continue with pending comment
- * - beforeShellExecution: Injects agent_message while allowing the command
  * - beforeMCPExecution: Injects agent_message while allowing the MCP call
  * - preToolUse: Denies current tool with pending comment as reason (fastest injection)
  * 
@@ -223,10 +222,7 @@ process.stdin.on('end', () => {
                         updated_input: updatedInput
                     };
                     markConsumed(pending.workspace, pending.timestamp, 'preToolUse');
-                    // Also mark for beforeShellExecution to avoid double-injection
-                    if (toolName === 'Shell') {
-                        markConsumed(pending.workspace, pending.timestamp, 'beforeShellExecution');
-                    }
+
                 } else {
                     // Can't safely modify this tool's input - just allow
                     // Other hooks (beforeShell, beforeMCP, stop) will handle injection
@@ -237,19 +233,6 @@ process.stdin.on('end', () => {
             } else {
                 response = {
                     decision: 'allow'
-                };
-            }
-        } else if (hookEvent === 'beforeShellExecution') {
-            // beforeShellExecution: Block command and force agent to think about pending
-            if (pending && !isRecentlyConsumed(pending.workspace, pending.timestamp, 'beforeShellExecution')) {
-                response = {
-                    permission: 'deny',
-                    agent_message: formatMessage(pending.comment)
-                };
-                markConsumed(pending.workspace, pending.timestamp, 'beforeShellExecution');
-            } else {
-                response = {
-                    permission: 'allow'
                 };
             }
         } else if (hookEvent === 'beforeMCPExecution') {

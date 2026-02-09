@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.3] - 2026-02-09
+
+### Changed
+- **Removed `beforeShellExecution` hook** to reduce interception overhead
+- Now using 3 hook points instead of 4: `stop`, `preToolUse`, `beforeMCPExecution`
+- Shell commands are no longer intercepted by hooks (preToolUse handles Shell via command modification)
+
+### Rationale
+- `beforeShellExecution` was redundant with `preToolUse` which already modifies Shell commands
+- Reduces hook overhead and potential for over-blocking
+- Maintains full coverage with remaining 3 hooks
+
 ## [1.2.2] - 2026-02-09
 
 ### Fixed
