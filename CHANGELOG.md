@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.4] - 2026-02-10
+
+### Removed
+- **Removed Cursor Hooks integration** to simplify the extension architecture
+- Deleted `scripts/hooks/check-pending.js` and related deployment logic
+- Removed automatic `~/.cursor/hooks.json` configuration
+
+### Rationale
+- Hooks added complexity and potential for conflicts with other extensions
+- MCP Resource-based pending comment access is sufficient for most use cases
+- Reduces maintenance burden and potential bugs
+
+### Retained
+- Pending comment tracking via WebSocket and file-based storage
+- MCP Resource `get_pending_comment` for programmatic access
+- All other features (WebSocket architecture, multi-window support, etc.)
+
 ## [1.2.3] - 2026-02-09
 
 ### Changed
