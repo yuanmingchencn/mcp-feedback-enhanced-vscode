@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.2.4] - 2026-02-10
+## [1.2.5] - 2026-02-10
 
 ### Removed
 - **Removed Cursor Hooks integration** to simplify the extension architecture
