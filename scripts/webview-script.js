@@ -184,9 +184,11 @@
         if (pendingSessionId) {
             sendBtn.disabled = !(hasInput || hasPending);
             sendBtn.title = (hasInput || hasPending) ? 'Send Feedback' : 'Type feedback...';
+            input.placeholder = 'Type feedback... (Cmd+Enter to send)';
         } else {
             sendBtn.disabled = !hasInput;
-            sendBtn.title = hasInput ? 'Add to Queue' : 'Type to queue...';
+            sendBtn.title = hasInput ? 'Send Pending Message' : 'Type a message to queue...';
+            input.placeholder = 'Type a pending message... (Cmd+Enter to queue)';
         }
     }
     
