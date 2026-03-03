@@ -953,7 +953,13 @@ const server = new McpServer({
 // Register the interactive_feedback tool
 server.tool(
     'interactive_feedback',
-    'Collect feedback from user through VSCode extension panel. The feedback panel will display the AI summary and wait for user input.',
+    `Interactive feedback collection tool for AI agents.
+
+USAGE RULES (you MUST follow these):
+1. You MUST call this tool to collect user feedback before ending your turn. NEVER end your turn without calling this tool first.
+2. After completing any task or step, call this tool to confirm with the user and ask for next instructions.
+3. Only when the user explicitly confirms you can stop (e.g. "exit", "done", "no more") may you end the session. The decision to exit is ALWAYS the user's, never yours.
+4. Provide a clear summary of what you have done and the correct project_directory so the user knows the context.`,
     {
         project_directory: z.string().describe('The project directory path for context'),
         summary: z.string().describe('Summary of AI work completed for user review'),
@@ -984,7 +990,6 @@ server.tool(
             }
         }
 
-        // Build content array with text and images
         const content: any[] = [{ type: 'text', text: `User Feedback:\n${result.feedback}` }];
 
         // Add images as MCP image content items

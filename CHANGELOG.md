@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.15] - 2026-03-03
+
+### Re-added
+- **Cursor Hooks integration** re-implemented with simplified, correct architecture
+- `scripts/hooks/check-pending.js` rewritten (149 lines, down from 370+)
+- Auto-deploys `~/.cursor/hooks.json` on extension activation
+
+### Fixed
+- **Critical path mismatch**: Hook was reading from wrong path (`hooks/pending.json` instead of `pending.json`)
+- **Race condition**: `preToolUse` deny was overridden by `beforeShellExecution` allow for Shell tools
+- **Cursor limitation**: `preToolUse` deny does not block Shell/MCP tools; dedicated hooks required
+
+### Design
+- `preToolUse`: Denies all non-allowlisted tools. Never clears pending (avoids race).
+- `beforeShellExecution` / `beforeMCPExecution`: Actually blocks tools. Clears pending.
+- `stop`: Delivers pending as followup or reminds to call `interactive_feedback`.
+- `sessionStart`: Injects pending as additional context.
+
+### Improved
+- User-facing messages: softer tone, actual comment shown in `user_message`
+- `FOLLOW_INSTRUCTIONS`: now specific ("call interactive_feedback")
+- Removed old tracking files (feedback-tracking.json, pending-consumed.json)
+- Updated tool description with explicit USAGE RULES
+
 ## [1.2.5] - 2026-02-10
 
 ### Removed

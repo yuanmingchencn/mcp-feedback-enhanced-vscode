@@ -2,26 +2,25 @@
 
 **Interactive feedback collection for AI assistants in VSCode & Cursor.**
 
-Connects your AI Agent (via MCP) to a rich, native sidebar interface for soliciting user feedback, approvals, and corrections.
+Connects your AI Agent (via MCP) to a rich, native sidebar interface for soliciting user feedback, approvals, and corrections — with real-time pending message injection via Cursor Hooks.
 
-## ✨ Features
+## Features
 
-- **💬 Rich Feedback UI**: Dedicated sidebar panel with history, markdown support, and quick replies.
-- **🛠️ Robust Connection**: Auto-reconnects with fallback strategies (localhost/127.0.0.1) and clear status indicators.
-- **📥 Pending Queue**: Queue multiple feedback items even when no session is active.
-- **🔄 Auto-Configuration**: Automatically sets up the MCP server in `~/.cursor/mcp.json` upon installation.
-- **🧠 Hidden Rules**: Active rules are injected into the AI context invisibly, keeping your chat clean.
-- **⚡ Real-time**: WebSocket-based communication for instant interaction.
-- **🔒 Secure & Local**: All data and history are stored locally on your machine.
-- **🔌 Multi-Window Support**: Works perfectly with multiple Cursor windows and projects.
+- **Rich Feedback UI**: Dedicated sidebar panel with history, markdown support, and quick replies.
+- **Cursor Hooks Integration**: Automatically injects pending user comments into the agent loop in real time via `stop`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, and `sessionStart` hooks.
+- **Pending Queue**: Queue comments while the agent is working — they are injected at the earliest opportunity.
+- **Auto-Configuration**: Automatically sets up the MCP server (`~/.cursor/mcp.json`) and Cursor hooks (`~/.cursor/hooks.json`) upon activation.
+- **Browser Fallback**: If the panel is unavailable, feedback automatically falls back to a system browser page.
+- **Multi-Window Support**: Routes requests to the correct Cursor window based on workspace matching and `CURSOR_TRACE_ID`.
+- **Secure & Local**: All data stays on your machine.
 
-## 🚀 Getting Started
+## Getting Started
 
 ### 1. Install the Extension
 Install **MCP Feedback Enhanced** from the VS Code Marketplace or Open VSX.
 
 ### 2. Verify MCP Configuration
-The extension attempts to auto-configure your `~/.cursor/mcp.json`. It should look like this:
+The extension auto-configures `~/.cursor/mcp.json`:
 
 ```json
 {
@@ -36,31 +35,47 @@ The extension attempts to auto-configure your `~/.cursor/mcp.json`. It should lo
 }
 ```
 
-> **Note**: The timeout is set to **24 hours** (86400s) to allow long-running sessions without interruption.
+### 3. Verify Cursor Hooks
+The extension auto-deploys `~/.cursor/hooks.json` with entries for all supported hook points. This enables real-time pending message injection.
 
-### 3. Usage
-When your AI Agent (using the `interactive_feedback` tool) requests input:
-1. The **MCP Feedback** panel will automatically open/focus.
-2. Review the AI's summary/request.
-3. Type your feedback or click a **Quick Reply** (Continue, Good, Fix).
-4. The AI receives your input immediately and proceeds.
+### 4. Usage
+1. The AI Agent calls `interactive_feedback` to request input.
+2. The **MCP Feedback** panel opens automatically.
+3. Type your feedback or click a **Quick Reply**.
+4. The AI receives your input and proceeds.
 
-## ⚙️ Settings & Customization
+**Pending Comments**: You can submit a comment anytime via the panel. If the agent is busy, the comment is queued and injected at the next hook trigger point (tool call, shell execution, MCP call, or agent stop).
 
-- **Hidden Rules**: Add rules in the "Settings" tab of the panel. These are sent to the AI with every request but remain hidden from the chat UI.
-- **Auto-Reply**: Configure automatic responses for specific scenarios.
-- **History**: View past feedback sessions in the History tab.
+## Architecture
 
-## 🔧 Troubleshooting
+```
+┌───────────────┐     WebSocket     ┌──────────────────┐     stdio     ┌─────────────┐
+│  Webview Panel │◄────────────────►│  Extension (Hub)  │◄────────────►│  MCP Server  │
+└───────────────┘                   └──────────────────┘               └─────────────┘
+                                           │
+                                    writes pending.json
+                                           │
+                                    ┌──────▼──────┐
+                                    │ Cursor Hooks │ (check-pending.js)
+                                    │  stop        │ → deliver pending / remind
+                                    │  preToolUse  │ → deny + inject (R/W/Grep)
+                                    │  beforeShell │ → block + inject (Shell)
+                                    │  beforeMCP   │ → block + inject (MCP)
+                                    │  sessionStart│ → inject as context
+                                    └─────────────┘
+```
 
-- **"Connecting..."**: Ensure the extension is active. Try reloading the window (`Cmd+R` / `Ctrl+R`).
-- **MCP Server Error**: Verify `mcp.json` configuration matches the snippet above.
-- **Multiple Windows**: The system automatically routes requests to the correct window based on the project path.
+## Troubleshooting
 
-## 📦 For Developers
+- **"Connecting..."**: Reload the window (`Cmd+R` / `Ctrl+R`).
+- **MCP Server Error**: Check `~/.cursor/mcp.json` matches the config above.
+- **Hooks Not Working**: Verify `~/.cursor/hooks.json` contains entries with `_source: "mcp-feedback-enhanced"`.
+- **Multiple Windows**: The system auto-routes based on workspace path and `CURSOR_TRACE_ID`.
+
+## For Developers
 
 - **NPM Package**: [`mcp-feedback-enhanced`](https://www.npmjs.com/package/mcp-feedback-enhanced)
-- **Repo**: [GitHub](https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode)
+- **Repository**: [GitHub](https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode)
 
 ---
 *Powered by [Model Context Protocol](https://modelcontextprotocol.io/)*

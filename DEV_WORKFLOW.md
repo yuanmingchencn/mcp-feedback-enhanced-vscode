@@ -84,6 +84,23 @@ User submits feedback:
 │ Webview    │───►│ WS Server    │───►│ MCP Server    │───►│ AI Agent │
 │ (panel)    │    │ (extension)  │    │ (stdio)       │    │          │
 └────────────┘    └──────────────┘    └───────────────┘    └──────────┘
+
+Pending comment injection (via Cursor Hooks):
+┌────────────┐  pending-update  ┌──────────────┐  writes  ┌──────────────┐
+│ Webview    │─────────────────►│ WS Server    │────────►│ pending.json │
+│ (panel)    │                  │ (extension)  │          │ (~/.config/) │
+└────────────┘                  └──────────────┘          └──────┬───────┘
+                                                                 │ reads
+                                                          ┌──────▼───────┐
+                                                          │ Cursor Hooks │
+                                                          │ check-       │
+                                                          │ pending.js   │
+                                                          └──────┬───────┘
+                                                                 │ deny/followup
+                                                          ┌──────▼───────┐
+                                                          │ AI Agent     │
+                                                          │ (blocked)    │
+                                                          └──────────────┘
 ```
 
 ### Key Design: State Separation
@@ -269,7 +286,9 @@ mcp-feedback-enhanced/
 │   ├── watch-reload.js         # Hot reload server
 │   ├── verify.js               # Verify compiled output
 │   ├── migrate-history.js      # JSON to SQLite migration
-│   └── rollback.js             # Rollback utility
+│   ├── rollback.js             # Rollback utility
+│   └── hooks/
+│       └── check-pending.js    # Cursor Hook for pending injection
 │
 ├── mcp-server/
 │   └── src/

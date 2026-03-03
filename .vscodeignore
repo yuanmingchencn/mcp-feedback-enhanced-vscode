@@ -14,30 +14,24 @@
 !mcp-server/package.json
 !mcp-server/README.md
 
-# Cursor Hooks script for real-time pending comment injection
-!scripts/hooks/check-pending.js
-
 # Exclude all source and dev files explicitly
 .vscode/**
 .vscode-test/**
 .cursor/**
 src/**
-scripts/**
 docs/**
 node_modules/**
 mcp-server/node_modules/**
 mcp-server/src/**
 
+# Exclude scripts but KEEP hooks script
+scripts/**
+!scripts/hooks/check-pending.js
+
 # Exclude dev/config files
-.git/**
 .gitignore
-.cursorrules
-.cursorignore
-*.ts
-*.map
-*.d.ts
-tsconfig.json
-DEV_WORKFLOW.md
+.env*
 *.vsix
 *.wav
 *.bak
+*.tsbuildinfo

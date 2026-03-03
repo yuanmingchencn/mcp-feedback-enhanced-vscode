@@ -696,6 +696,11 @@
                     updateSendButtonState();
                 }
                 break;
+
+            case 'pending-consumed':
+                pendingComments = [];
+                savePendingComments();
+                break;
                 
             case 'history':
                 console.log('[MCP Feedback] Received history:', msg.sessions ? msg.sessions.length : 0, 'sessions');

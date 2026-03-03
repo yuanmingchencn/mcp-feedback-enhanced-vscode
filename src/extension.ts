@@ -89,7 +89,6 @@ export async function activate(context: vscode.ExtensionContext) {
     // Wire up pending updates to WebSocket server
     feedbackViewProvider.onPendingUpdate((value) => {
         if (wsServer) {
-            // Use current workspace as key
             const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
             if (workspacePath) {
                 wsServer.updatePendingComment(workspacePath, value);
@@ -234,6 +233,9 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Auto-configure MCP server
     ensureMcpConfig();
+
+    // Deploy Cursor hooks for real-time pending comment injection
+    deployCursorHooks(context);
 }
 
 /**
@@ -292,6 +294,84 @@ async function ensureMcpConfig(): Promise<void> {
 
     } catch (e) {
         console.error('[MCP Feedback] Failed to auto-configure MCP:', e);
+    }
+}
+
+/**
+ * Deploy Cursor hooks for real-time pending comment injection
+ * Copies hook script to ~/.config/mcp-feedback-enhanced/hooks/ and updates ~/.cursor/hooks.json
+ */
+async function deployCursorHooks(context: vscode.ExtensionContext): Promise<void> {
+    try {
+        const cursorHooksPath = path.join(os.homedir(), '.cursor', 'hooks.json');
+        const hookScriptSource = path.join(context.extensionPath, 'scripts', 'hooks', 'check-pending.js');
+        const hookScriptTarget = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks', 'check-pending.js');
+
+        // Ensure target directory exists
+        const targetDir = path.dirname(hookScriptTarget);
+        if (!fs.existsSync(targetDir)) {
+            fs.mkdirSync(targetDir, { recursive: true });
+        }
+
+        // Copy hook script
+        fs.copyFileSync(hookScriptSource, hookScriptTarget);
+        console.log('[MCP Feedback] Hook script deployed to:', hookScriptTarget);
+
+        // Read existing hooks.json
+        let hooksConfig: any = { version: 1, hooks: {} };
+        if (fs.existsSync(cursorHooksPath)) {
+            try {
+                const content = fs.readFileSync(cursorHooksPath, 'utf-8');
+                hooksConfig = JSON.parse(content);
+                if (!hooksConfig.hooks) {
+                    hooksConfig.hooks = {};
+                }
+            } catch (e) {
+                console.error('[MCP Feedback] Failed to parse hooks.json, creating new one');
+                hooksConfig = { version: 1, hooks: {} };
+            }
+        }
+
+        // Define our hook entries
+        const hookEntry = {
+            command: `node ${hookScriptTarget}`,
+            _source: 'mcp-feedback-enhanced'
+        };
+
+        // Hook points we want to intercept
+        const hookPoints = [
+            'sessionStart', 'preToolUse',
+            'beforeShellExecution', 'beforeMCPExecution',
+            'subagentStart', 'subagentStop', 'stop'
+        ];
+
+        // Update each hook point
+        let updated = false;
+        for (const hookPoint of hookPoints) {
+            if (!hooksConfig.hooks[hookPoint]) {
+                hooksConfig.hooks[hookPoint] = [];
+            }
+
+            // Remove old entries from us
+            hooksConfig.hooks[hookPoint] = hooksConfig.hooks[hookPoint].filter(
+                (h: any) => h._source !== 'mcp-feedback-enhanced'
+            );
+
+            // Add our new entry
+            hooksConfig.hooks[hookPoint].push({ ...hookEntry });
+            updated = true;
+        }
+
+        // Write updated config
+        fs.writeFileSync(cursorHooksPath, JSON.stringify(hooksConfig, null, 4), 'utf-8');
+        console.log('[MCP Feedback] Cursor hooks configured in ~/.cursor/hooks.json');
+
+        if (updated) {
+            vscode.window.showInformationMessage('MCP Feedback Enhanced: Cursor hooks auto-configured ✓');
+        }
+
+    } catch (e) {
+        console.error('[MCP Feedback] Failed to deploy Cursor hooks:', e);
     }
 }
 

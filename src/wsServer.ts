@@ -72,6 +72,7 @@ export class FeedbackWebSocketServer {
     private _port: number = DEFAULT_PORT;
     private _onStatusChange: (status: string) => void;
     private _onFeedbackRequest: (() => void) | null = null;
+    private _pendingPollInterval: NodeJS.Timeout | null = null;
     private _heartbeatInterval: NodeJS.Timeout | null = null;
     private _clientLastPong: Map<WebSocket.WebSocket, number> = new Map();  // Track last pong time
     private static readonly HEARTBEAT_INTERVAL = 15000;  // 15 seconds
@@ -126,33 +127,52 @@ export class FeedbackWebSocketServer {
         };
     }
 
-    private _pendingComments: Map<string, string> = new Map(); // ProjectPath -> Comment
+    private _pendingComment: string = '';
+    private _pendingWorkspace: string = '';
 
     /**
-     * Update pending comment for a project (from Webview changes)
-     * Also writes to file for Cursor Hooks to read.
+     * Update pending comment (from Webview).
+     * Writes plain text to pending.json for Cursor Hooks to read.
      */
     updatePendingComment(projectPath: string, comment: string): void {
-        if (comment) {
-            this._pendingComments.set(projectPath, comment);
-        } else {
-            this._pendingComments.delete(projectPath);
+        this._pendingComment = comment || '';
+        this._pendingWorkspace = comment ? projectPath : '';
+        try {
+            if (comment) {
+                fs.writeFileSync(PENDING_FILE, comment, 'utf-8');
+            } else if (fs.existsSync(PENDING_FILE)) {
+                fs.unlinkSync(PENDING_FILE);
+            }
+        } catch (e) {
+            console.error('[MCP Feedback WS] Failed to write pending file:', e);
         }
-        this._writePendingToFile();
     }
 
     /**
-     * Write all pending comments to a shared file for Cursor Hooks.
+     * Poll pending.json to detect when the Cursor Hook consumes it.
+     * File gone + in-memory has pending → consumed → notify webview.
      */
-    private _writePendingToFile(): void {
-        try {
-            const data: Record<string, { comment: string; timestamp: number }> = {};
-            for (const [projectPath, comment] of this._pendingComments.entries()) {
-                data[projectPath] = { comment, timestamp: Date.now() };
+    private _startPendingPoll(): void {
+        this._stopPendingPoll();
+        this._pendingPollInterval = setInterval(() => {
+            if (!this._pendingComment) return;
+            if (fs.existsSync(PENDING_FILE)) return;
+
+            const workspace = this._pendingWorkspace;
+            this._pendingComment = '';
+            this._pendingWorkspace = '';
+            console.log('[MCP Feedback WS] Pending consumed by hook');
+            if (workspace) {
+                const webviews = this._findWebviewsForProject(workspace);
+                webviews.forEach(wv => this._send(wv.ws, { type: 'pending-consumed' }));
             }
-            fs.writeFileSync(PENDING_FILE, JSON.stringify(data, null, 2));
-        } catch (e) {
-            console.error('[MCP Feedback WS] Failed to write pending file:', e);
+        }, 1500);
+    }
+
+    private _stopPendingPoll(): void {
+        if (this._pendingPollInterval) {
+            clearInterval(this._pendingPollInterval);
+            this._pendingPollInterval = null;
         }
     }
 
@@ -164,23 +184,8 @@ export class FeedbackWebSocketServer {
         return HOOKS_DIR;
     }
 
-    /**
-     * Get pending comment for a project (for MCP Resource)
-     */
-    getPendingComment(projectPath: string): string {
-        // Try exact match first
-        if (this._pendingComments.has(projectPath)) {
-            return this._pendingComments.get(projectPath) || '';
-        }
-
-        // Try finding if projectPath is a subdirectory of a known workspace
-        for (const [wsPath, comment] of this._pendingComments.entries()) {
-            if (projectPath.startsWith(wsPath)) {
-                return comment;
-            }
-        }
-
-        return '';
+    getPendingComment(_projectPath: string): string {
+        return this._pendingComment;
     }
 
     private _ensureDirectories(): void {
@@ -246,6 +251,8 @@ export class FeedbackWebSocketServer {
                 // Start heartbeat monitoring
                 this._startHeartbeat();
 
+                this._startPendingPoll();
+
                 resolve(this._port);
             });
 
@@ -307,6 +314,8 @@ export class FeedbackWebSocketServer {
     }
 
     private _stopInternal(): void {
+        this._stopPendingPoll();
+
         if (this._wss) {
             console.log('[MCP Feedback WS] Stopping server...');
 
