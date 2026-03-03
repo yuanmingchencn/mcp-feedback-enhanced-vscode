@@ -664,10 +664,10 @@
                 // Request focus
                 vscode.postMessage({ type: 'new-session' });
                 
-                // Auto-send pending comments if available
+                // Auto-send pending comments if available (don't clear user's input)
                 if (pendingComments.length > 0) {
                     const combined = pendingComments.join('\n\n');
-                    if (submitFeedback(combined)) {
+                    if (submitFeedback(combined, false)) {
                         pendingComments = [];
                         savePendingComments();
                     }
@@ -679,7 +679,7 @@
                     autoReplyTimeoutId = setTimeout(() => {
                         autoReplyTimeoutId = null;
                         if (pendingSessionId === targetSessionId && autoReplyEnabled) {
-                            submitFeedback(replyText);
+                            submitFeedback(replyText, false);
                         }
                     }, 500);
                 }
@@ -799,7 +799,8 @@
     // ============================================
     // Feedback Submission
     // ============================================
-    function submitFeedback(text) {
+    function submitFeedback(text, clearInput) {
+        if (clearInput === undefined) clearInput = true;
         if (!pendingSessionId || !ws || ws.readyState !== WebSocket.OPEN) {
             return false;
         }
@@ -838,8 +839,10 @@
         if (aiMsg) aiMsg.pending = false;
         
         pendingSessionId = null;
-        input.value = '';
-        try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+        if (clearInput) {
+            input.value = '';
+            try { localStorage.removeItem(INPUT_CACHE_KEY); } catch {}
+        }
         
         saveHistory();
         render();
