@@ -56,7 +56,7 @@ function consumePending() {
 }
 
 function fmtAgent(comment) {
-    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + comment + '"';
+    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + comment + '"\n\nAfter addressing this feedback, you MUST call the interactive_feedback tool to respond to the user.';
 }
 
 function fmtUser(comment) {
