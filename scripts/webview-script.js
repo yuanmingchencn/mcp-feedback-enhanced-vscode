@@ -171,7 +171,7 @@
     }
     
     clearPendingBtn.addEventListener('click', () => {
-        if (confirm('Clear all pending comments?')) {
+        if (confirm('Clear all pending messages?')) {
             pendingComments = [];
             savePendingComments();
         }
@@ -702,7 +702,8 @@
                     const delivered = pendingComments.join('\n\n');
                     messages.push({
                         role: 'system',
-                        content: 'Pending comment delivered to agent:\n\n> ' + delivered.replace(/\n/g, '\n> '),
+                        content: 'Pending message delivered to agent:\n\n> ' + delivered.replace(/\n/g, '\n> '),
+                        rawText: delivered,
                         timestamp: new Date().toISOString()
                     });
                     saveHistory();
@@ -1012,7 +1013,21 @@
             content.className = 'message-content';
             content.innerHTML = renderMarkdown(msg.content);
             body.appendChild(content);
-            
+
+            if (msg.role === 'system' && msg.rawText) {
+                const copyBtn = document.createElement('button');
+                copyBtn.className = 'system-copy-btn';
+                copyBtn.textContent = 'Copy';
+                copyBtn.title = 'Copy original message to clipboard';
+                copyBtn.onclick = () => {
+                    navigator.clipboard.writeText(msg.rawText).then(() => {
+                        copyBtn.textContent = 'Copied!';
+                        setTimeout(() => { copyBtn.textContent = 'Copy'; }, 1500);
+                    });
+                };
+                content.appendChild(copyBtn);
+            }
+
             // Render images if present
             if (msg.images && msg.images.length > 0) {
                 const imagesDiv = document.createElement('div');

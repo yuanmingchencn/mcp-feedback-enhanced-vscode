@@ -109,7 +109,7 @@ ${getStyles()}
             
             <div class="pending-section" id="pendingSection" style="display:none;">
                 <div class="pending-header">
-                    <span>Pending Queue</span>
+                    <span>Pending Messages</span>
                     <button class="clear-pending-btn" id="clearPendingBtn" title="Clear all">✕</button>
                 </div>
                 <div class="pending-list" id="pendingList">
@@ -327,7 +327,23 @@ body {
     background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 10%, var(--vscode-editor-background));
     border-left: 3px solid var(--vscode-terminal-ansiYellow, #dcdcaa);
     font-size: 12px;
+    position: relative;
 }
+
+.system-copy-btn {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    padding: 2px 8px;
+    font-size: 11px;
+    border: 1px solid var(--vscode-button-border, rgba(255,255,255,0.1));
+    border-radius: 3px;
+    background: var(--vscode-button-secondaryBackground, #3a3d41);
+    color: var(--vscode-button-secondaryForeground, #ccc);
+    cursor: pointer;
+    opacity: 0.7;
+}
+.system-copy-btn:hover { opacity: 1; }
 
 .message.pending {
     border-left: 3px solid var(--vscode-terminal-ansiYellow, #fc0);
