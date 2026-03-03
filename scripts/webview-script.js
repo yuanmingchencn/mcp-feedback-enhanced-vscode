@@ -698,6 +698,16 @@
                 break;
 
             case 'pending-consumed':
+                if (pendingComments.length > 0) {
+                    const delivered = pendingComments.join('\n\n');
+                    messages.push({
+                        role: 'system',
+                        content: 'Pending comment delivered to agent:\n\n> ' + delivered.replace(/\n/g, '\n> '),
+                        timestamp: new Date().toISOString()
+                    });
+                    saveHistory();
+                    render();
+                }
                 pendingComments = [];
                 savePendingComments();
                 break;
@@ -976,7 +986,7 @@
             
             const avatar = document.createElement('div');
             avatar.className = 'message-avatar';
-            avatar.textContent = msg.role === 'ai' ? '🤖' : '👤';
+            avatar.textContent = msg.role === 'ai' ? '🤖' : msg.role === 'system' ? '📨' : '👤';
             div.appendChild(avatar);
             
             const body = document.createElement('div');
@@ -987,7 +997,7 @@
             
             const name = document.createElement('span');
             name.className = 'message-name';
-            name.textContent = msg.role === 'ai' ? 'AI' : 'You';
+            name.textContent = msg.role === 'ai' ? 'AI' : msg.role === 'system' ? 'System' : 'You';
             header.appendChild(name);
             
             if (msg.timestamp) {

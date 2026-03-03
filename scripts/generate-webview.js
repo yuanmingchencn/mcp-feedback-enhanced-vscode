@@ -262,6 +262,17 @@ body {
     background: var(--vscode-terminal-ansiGreen, #4ec9b0);
 }
 
+.message.system {
+    margin-left: auto;
+    margin-right: auto;
+    max-width: 90%;
+    opacity: 0.85;
+}
+
+.message.system .message-avatar {
+    background: var(--vscode-terminal-ansiYellow, #dcdcaa);
+}
+
 .message-body {
     flex: 1;
     min-width: 0;
@@ -286,6 +297,7 @@ body {
 
 .message.ai .message-name { color: var(--vscode-terminal-ansiBlue, #569cd6); }
 .message.user .message-name { color: var(--vscode-terminal-ansiGreen, #4ec9b0); }
+.message.system .message-name { color: var(--vscode-terminal-ansiYellow, #dcdcaa); }
 
 .message-time {
     font-size: 10px;
@@ -309,6 +321,12 @@ body {
     background: color-mix(in srgb, var(--vscode-terminal-ansiGreen) 15%, var(--vscode-editor-background));
     border-right: 3px solid var(--vscode-terminal-ansiGreen, #4ec9b0);
     text-align: left;
+}
+
+.message.system .message-content {
+    background: color-mix(in srgb, var(--vscode-terminal-ansiYellow) 10%, var(--vscode-editor-background));
+    border-left: 3px solid var(--vscode-terminal-ansiYellow, #dcdcaa);
+    font-size: 12px;
 }
 
 .message.pending {
