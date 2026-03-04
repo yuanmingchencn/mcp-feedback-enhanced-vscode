@@ -5,14 +5,13 @@
  * Injects pending user feedback into the agent loop at every actionable hook point.
  * pending.json is a plain-text file (the comment itself). On consume the file is deleted.
  *
- * Hook points (7 total):
+ * Hook points (6 total):
  * - sessionStart:           Inject as additional_context + clear.
  * - preToolUse:             Deny non-allowlisted tools (agent sees reason). Never clears
  *                           because Cursor ignores preToolUse deny for Shell/MCP tools.
  * - beforeShellExecution:   Block + clear.
  * - beforeMCPExecution:     Block + clear.
  * - subagentStart:          Block subagent creation + clear.
- * - subagentStop:           Inject as followup_message + clear.
  * - stop:                   Deliver as followup or remind to call interactive_feedback.
  */
 
@@ -79,17 +78,6 @@ function main() {
             output({ followup_message: fmtAgent(pending) });
         } else {
             output({ followup_message: FOLLOW_INSTRUCTIONS });
-        }
-        return;
-    }
-
-    // ---- subagentStop ----
-    if (hook === 'subagentStop') {
-        if (pending) {
-            consumePending();
-            output({ followup_message: fmtAgent(pending) });
-        } else {
-            output({});
         }
         return;
     }

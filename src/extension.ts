@@ -342,7 +342,7 @@ async function deployCursorHooks(context: vscode.ExtensionContext): Promise<void
         const hookPoints = [
             'sessionStart', 'preToolUse',
             'beforeShellExecution', 'beforeMCPExecution',
-            'subagentStart', 'subagentStop', 'stop'
+            'subagentStart', 'stop'
         ];
 
         // Update each hook point
