@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.23] - 2026-03-04
+
+### Fixed
+- **Removed `subagentStop` hook**: Its `followup_message` was disrupting the parent agent's normal processing of subagent results. Pending messages are still reliably delivered via `preToolUse`/`beforeShellExecution`/`beforeMCPExecution` on the parent's next action.
+
+### Design (6 hook points)
+- `sessionStart`: Inject pending as additional context.
+- `preToolUse`: Deny non-allowlisted tools (agent sees reason). Never clears (Cursor ignores deny for Shell/MCP).
+- `beforeShellExecution`: Block + clear.
+- `beforeMCPExecution`: Block + clear (allow allowlisted tools).
+- `subagentStart`: Block subagent creation + clear.
+- `stop`: Deliver pending as followup or remind to call `interactive_feedback`.
+
 ## [1.2.15] - 2026-03-03
 
 ### Re-added
@@ -15,10 +28,11 @@ All notable changes to this project will be documented in this file.
 - **Cursor limitation**: `preToolUse` deny does not block Shell/MCP tools; dedicated hooks required
 
 ### Design
+- `sessionStart`: Injects pending as additional context.
 - `preToolUse`: Denies all non-allowlisted tools. Never clears pending (avoids race).
 - `beforeShellExecution` / `beforeMCPExecution`: Actually blocks tools. Clears pending.
+- `subagentStart`: Blocks subagent creation. Clears pending.
 - `stop`: Delivers pending as followup or reminds to call `interactive_feedback`.
-- `sessionStart`: Injects pending as additional context.
 
 ### Improved
 - User-facing messages: softer tone, actual comment shown in `user_message`

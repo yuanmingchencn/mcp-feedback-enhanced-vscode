@@ -7,7 +7,7 @@ Connects your AI Agent (via MCP) to a rich, native sidebar interface for solicit
 ## Features
 
 - **Rich Feedback UI**: Dedicated sidebar panel with history, markdown support, and quick replies.
-- **Cursor Hooks Integration**: Automatically injects pending user comments into the agent loop in real time via `stop`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, and `sessionStart` hooks.
+- **Cursor Hooks Integration**: Automatically injects pending user comments into the agent loop in real time via `sessionStart`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, `subagentStart`, and `stop` hooks.
 - **Pending Queue**: Queue comments while the agent is working — they are injected at the earliest opportunity.
 - **Auto-Configuration**: Automatically sets up the MCP server (`~/.cursor/mcp.json`) and Cursor hooks (`~/.cursor/hooks.json`) upon activation.
 - **Browser Fallback**: If the panel is unavailable, feedback automatically falls back to a system browser page.
@@ -57,11 +57,12 @@ The extension auto-deploys `~/.cursor/hooks.json` with entries for all supported
                                            │
                                     ┌──────▼──────┐
                                     │ Cursor Hooks │ (check-pending.js)
-                                    │  stop        │ → deliver pending / remind
+                                    │  sessionStart│ → inject as context
                                     │  preToolUse  │ → deny + inject (R/W/Grep)
                                     │  beforeShell │ → block + inject (Shell)
                                     │  beforeMCP   │ → block + inject (MCP)
-                                    │  sessionStart│ → inject as context
+                                    │  subagentStart → block + inject
+                                    │  stop        │ → deliver pending / remind
                                     └─────────────┘
 ```
 
