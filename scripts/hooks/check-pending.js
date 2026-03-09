@@ -240,7 +240,8 @@ function main() {
     }
 
     // ─── preToolUse ───────────────────────────────────
-    // Uses decision/reason. Never consumes pending (Cursor ignores deny for Shell/MCP).
+    // Uses permission/user_message/agent_message per official docs.
+    // Never consumes pending — beforeShellExecution/beforeMCPExecution will also fire and consume there.
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
@@ -248,13 +249,14 @@ function main() {
         if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(toolName)) {
             const combined = pending.comments.join('\n\n');
             output({
-                decision: 'deny',
-                reason: fmtAgent(combined),
+                permission: 'deny',
+                user_message: fmtUser(combined),
+                agent_message: fmtAgent(combined),
             });
             return;
         }
 
-        output({ decision: 'allow' });
+        output({});
         return;
     }
 
@@ -305,19 +307,19 @@ function main() {
     }
 
     // ─── subagentStart ───────────────────────────────
-    // Uses decision/reason. Consumes pending.
+    // Uses permission/user_message per official docs. Consumes pending.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                decision: 'deny',
-                reason: fmtAgent(combined),
+                permission: 'deny',
+                user_message: fmtAgent(combined),
             });
             return;
         }
-        output({ decision: 'allow' });
+        output({});
         return;
     }
 
