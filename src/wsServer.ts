@@ -519,11 +519,44 @@ export class FeedbackWSServer {
     }
 
     private _scanExistingSessions(): void {
+        // Load sessions for this PID (current lifecycle)
         const sessions = listSessions().filter(s => s.server_pid === process.pid);
         for (const session of sessions) {
             this._onSessionRegistered(session);
         }
-        console.log(`[MCP Feedback] Found ${sessions.length} existing session(s) for this instance`);
+
+        // Restore conversations from previous lifecycles (matched by workspace)
+        const myRoots = new Set(this.workspaces.map(w => w.replace(/\/+$/, '')));
+        const restoredConvs = listConversations().filter(c => {
+            if (c.server_pid === process.pid) return false; // already handled above
+            if (c.state === 'archived') return false;
+            const convRoots = (c.workspace_roots || []).map(r => r.replace(/\/+$/, ''));
+            return convRoots.some(r => myRoots.has(r));
+        });
+
+        for (const conv of restoredConvs) {
+            // Adopt this conversation: update server_pid to current process
+            conv.server_pid = process.pid;
+            if (conv.state === 'waiting') {
+                conv.state = 'idle'; // can't be waiting after restart
+                conv.active_session_id = null;
+            }
+            writeConversation(conv);
+
+            this._broadcastToWebviews({
+                type: 'session_registered',
+                session: {
+                    conversation_id: conv.conversation_id,
+                    workspace_roots: conv.workspace_roots,
+                    model: conv.model,
+                    server_pid: process.pid,
+                    started_at: conv.started_at,
+                },
+                conversation: conv,
+            });
+        }
+
+        console.log(`[MCP Feedback] Found ${sessions.length} session(s), restored ${restoredConvs.length} conversation(s)`);
     }
 
     private _onSessionRegistered(session: import('./types').SessionRegistration): void {
@@ -633,7 +666,7 @@ export class FeedbackWSServer {
 
     private _sendConversationsList(ws: WebSocket): void {
         const conversations = listConversations()
-            .filter(c => c.server_pid === process.pid)
+            .filter(c => c.server_pid === process.pid && c.state !== 'archived')
             .map(c => ({
                 conversation_id: c.conversation_id,
                 model: c.model,
