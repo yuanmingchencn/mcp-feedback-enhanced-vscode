@@ -528,6 +528,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 if (tab.pendingQueue.length > 0) {
                     const combined = tab.pendingQueue.join('\n\n');
                     tab.pendingQueue = [];
+                    renderPending();
                     submitFeedback(combined);
                     return;
                 }
