@@ -513,6 +513,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 tab.state = 'waiting';
                 tab.pendingSessionId = info.session_id;
                 tab.messages.push({ role: 'ai', content: info.summary || '', timestamp: new Date().toISOString() });
+
                 switchTab(id);
                 if (vscode) vscode.postMessage({ type: 'new-session' });
                 if (tab.pendingQueue.length > 0) {

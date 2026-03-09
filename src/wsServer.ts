@@ -107,6 +107,7 @@ export class FeedbackWSServer {
         this._registerServer();
         this._startHeartbeat();
         this._watchSessionsDir();
+        this._scanExistingSessions();
 
         console.log(`[MCP Feedback] WebSocket server started on port ${this.port}`);
         return this.port;
@@ -469,6 +470,14 @@ export class FeedbackWSServer {
         } catch (e) {
             console.error('[MCP Feedback] Failed to watch sessions dir:', e);
         }
+    }
+
+    private _scanExistingSessions(): void {
+        const sessions = listSessions().filter(s => s.server_pid === process.pid);
+        for (const session of sessions) {
+            this._onSessionRegistered(session);
+        }
+        console.log(`[MCP Feedback] Found ${sessions.length} existing session(s) for this instance`);
     }
 
     private _onSessionRegistered(session: import('./types').SessionRegistration): void {

@@ -149,7 +149,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     );
 
     // Auto-configure MCP and deploy hooks
-    ensureMcpConfig();
+    ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
 
     // Auto-open sidebar after short delay
@@ -186,7 +186,7 @@ function _openEditorPanel(context: vscode.ExtensionContext, port: number): void 
 
 // ─── MCP Auto-Config ──────────────────────────────────────
 
-function ensureMcpConfig(): void {
+function ensureMcpConfig(extensionPath: string): void {
     try {
         const mcpConfigPath = path.join(os.homedir(), '.cursor', 'mcp.json');
         let config: Record<string, unknown> = {};
@@ -196,11 +196,13 @@ function ensureMcpConfig(): void {
         }
 
         const mcpServers = (config.mcpServers || {}) as Record<string, unknown>;
+
+        // Point to the local build of the v2 MCP server
+        const localServerPath = path.join(extensionPath, 'mcp-server', 'dist', 'index.js');
+        const expectedCommand = 'node';
+        const expectedArgs = [localServerPath];
+
         const existing = mcpServers['mcp-feedback-v2'] as Record<string, unknown> | undefined;
-
-        const expectedCommand = 'npx';
-        const expectedArgs = ['-y', 'mcp-feedback-enhanced@latest'];
-
         if (existing?.command === expectedCommand &&
             JSON.stringify(existing?.args) === JSON.stringify(expectedArgs)) {
             return;
@@ -237,6 +239,7 @@ function deployCursorHooks(extensionPath: string): void {
         fs.copyFileSync(sourceHook, targetHook);
 
         // Update ~/.cursor/hooks.json
+        // Cursor format: { version: 1, hooks: { "eventType": [{ command, _source }] } }
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
 
@@ -244,22 +247,25 @@ function deployCursorHooks(extensionPath: string): void {
             hooksConfig = JSON.parse(fs.readFileSync(hooksConfigPath, 'utf-8'));
         }
 
-        const hooks = (hooksConfig.hooks || []) as Array<Record<string, unknown>>;
+        if (!hooksConfig.version) { hooksConfig.version = 1; }
+
+        const hooks = (hooksConfig.hooks || {}) as Record<string, Array<Record<string, unknown>>>;
         const hookPoints = ['sessionStart', 'stop', 'preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'subagentStart'];
+        const hookCommand = `node ${targetHook}`;
+        const SOURCE_TAG = 'mcp-feedback-enhanced';
 
-        // Remove old entries for our hook
-        const filtered = hooks.filter(h => {
-            const cmd = (h.command || '') as string;
-            return !cmd.includes('check-pending.js');
-        });
+        for (const event of hookPoints) {
+            if (!hooks[event]) { hooks[event] = []; }
+            // Remove existing entries from us
+            hooks[event] = hooks[event].filter(h => h._source !== SOURCE_TAG);
+            // Add our entry
+            hooks[event].push({
+                command: hookCommand,
+                _source: SOURCE_TAG,
+            });
+        }
 
-        // Add new entry
-        filtered.push({
-            command: `node "${targetHook}"`,
-            events: hookPoints,
-        });
-
-        hooksConfig.hooks = filtered;
+        hooksConfig.hooks = hooks;
         fs.mkdirSync(path.dirname(hooksConfigPath), { recursive: true });
         fs.writeFileSync(hooksConfigPath, JSON.stringify(hooksConfig, null, 2));
         console.log('[MCP Feedback] Cursor hooks deployed');
