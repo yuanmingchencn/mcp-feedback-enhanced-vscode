@@ -774,6 +774,27 @@ const SESSION_ID = '{{SESSION_ID}}';
                 break;
             }
 
+            case 'pending_delivered': {
+                const tab = tabs.get(msg.conversation_id);
+                if (tab) {
+                    const comments = msg.comments || [];
+                    if (comments.length > 0) {
+                        const delivered = comments.join('\n\n');
+                        tab.messages.push({
+                            role: 'system',
+                            content: 'Pending delivered to agent:\n\n> ' + delivered.split('\n').join('\n> '),
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
+                    tab.pendingQueue = [];
+                    if (msg.conversation_id === activeTabId) {
+                        renderMessages(); renderPending();
+                    }
+                    saveState();
+                }
+                break;
+            }
+
             case 'tab_closed': {
                 const cid = msg.conversation_id;
                 if (cid && tabs.has(cid)) {

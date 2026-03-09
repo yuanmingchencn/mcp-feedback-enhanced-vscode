@@ -473,22 +473,25 @@ export class FeedbackWSServer {
                 clearInterval(timer);
                 this.pendingWatchers.delete(conversationId);
 
-                this._broadcastToWebviews({
-                    type: 'pending-consumed',
-                    conversation_id: conversationId,
-                });
-
                 const conv = readConversation(conversationId);
-                if (conv && conv.pending_queue.length > 0) {
-                    const delivered = conv.pending_queue.join('\n\n');
+                const deliveredComments = conv ? [...conv.pending_queue] : [];
+
+                if (conv && deliveredComments.length > 0) {
+                    const delivered = deliveredComments.join('\n\n');
                     conv.pending_queue = [];
                     conv.messages.push({
                         role: 'system',
-                        content: `Pending delivered:\n\n> ${delivered.split('\n').join('\n> ')}`,
+                        content: `Pending delivered to agent:\n\n> ${delivered.split('\n').join('\n> ')}`,
                         timestamp: new Date().toISOString(),
                     });
                     writeConversation(conv);
                 }
+
+                this._broadcastToWebviews({
+                    type: 'pending_delivered',
+                    conversation_id: conversationId,
+                    comments: deliveredComments,
+                });
             }
         }, 500);
 
