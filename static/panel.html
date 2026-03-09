@@ -105,6 +105,18 @@ body{
 .send-btn.queue-mode{background:var(--input-bg);color:var(--fg);border:1px solid var(--border)}
 .send-btn.queue-mode:hover{border-color:var(--btn-bg)}
 
+/* Image preview */
+.image-previews{display:flex;gap:6px;padding:4px 10px;flex-wrap:wrap}
+.image-previews:empty{display:none}
+.img-preview{position:relative;width:60px;height:60px;border-radius:6px;overflow:hidden;border:1px solid var(--border)}
+.img-preview img{width:100%;height:100%;object-fit:cover}
+.img-preview .remove{position:absolute;top:-2px;right:-2px;width:18px;height:18px;background:rgba(0,0,0,.7);color:#fff;border:none;border-radius:50%;font-size:12px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1}
+.img-preview .remove:hover{background:#e74c3c}
+.attach-btn{background:transparent;border:1px solid var(--border);color:var(--fg-dim);border-radius:6px;padding:8px;cursor:pointer;font-size:16px;line-height:1;flex-shrink:0}
+.attach-btn:hover{color:var(--fg);border-color:var(--btn-bg)}
+.message .content img{max-width:200px;max-height:150px;border-radius:6px;margin:4px 0;cursor:pointer}
+.message .content img:hover{opacity:.8}
+
 /* Settings */
 .settings-toggle{margin-left:auto;flex-shrink:0}
 .settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:13px;padding:0 2px}
@@ -155,12 +167,15 @@ body{
   <button class="quick-reply-btn" data-text="Stop, I want to review first">Stop</button>
 </div>
 
+<div class="image-previews" id="imagePreviews"></div>
 <div class="input-area">
   <div class="input-row">
-    <textarea id="input" placeholder="Type your feedback..." rows="4"></textarea>
+    <button class="attach-btn" id="attachBtn" title="Attach image">📎</button>
+    <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
 </div>
+<input type="file" id="fileInput" accept="image/*" multiple style="display:none">
 
 <script>
 const SERVER_URL = '{{SERVER_URL}}';
@@ -190,10 +205,15 @@ const SESSION_ID = '{{SESSION_ID}}';
     const autoReplyCheck = document.getElementById('autoReplyCheck');
     const autoReplyText = document.getElementById('autoReplyText');
 
+    const imagePreviews = document.getElementById('imagePreviews');
+    const attachBtn = document.getElementById('attachBtn');
+    const fileInput = document.getElementById('fileInput');
+
     let ws = null;
     let reconnectAttempts = 0;
     let activeTabId = null;
     const tabs = new Map();
+    let pendingImages = []; // base64 strings
 
     class TabState {
         constructor(id, label, model, state) {
@@ -331,6 +351,14 @@ const SESSION_ID = '{{SESSION_ID}}';
                 el.appendChild(h);
                 const c = document.createElement('div'); c.className = 'content';
                 c.innerHTML = md(msg.content);
+                if (msg.images && msg.images.length > 0) {
+                    for (const b64 of msg.images) {
+                        const img = document.createElement('img');
+                        img.src = 'data:image/png;base64,' + b64;
+                        img.title = 'Click to open';
+                        c.appendChild(img);
+                    }
+                }
                 el.appendChild(c);
             }
             row.appendChild(el);
@@ -406,12 +434,12 @@ const SESSION_ID = '{{SESSION_ID}}';
     // ── Smart Send ───────────────────────────────────────
     function updateSendButton() {
         const tab = activeTabId ? tabs.get(activeTabId) : null;
-        const hasText = input.value.trim().length > 0;
+        const hasContent = input.value.trim().length > 0 || pendingImages.length > 0;
         const isWaiting = tab && tab.state === 'waiting' && tab.pendingSessionId;
         const isEnded = tab && tab.state === 'ended';
         if (isEnded) { sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn'; }
-        else if (isWaiting) { sendBtn.disabled = !hasText; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn'; }
-        else { sendBtn.disabled = !hasText; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode'; }
+        else if (isWaiting) { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn'; }
+        else { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode'; }
     }
 
     function smartSend() {
@@ -427,17 +455,92 @@ const SESSION_ID = '{{SESSION_ID}}';
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab || !tab.pendingSessionId) return;
         if (ws && ws.readyState === WebSocket.OPEN) {
+            const images = pendingImages.slice();
             ws.send(JSON.stringify({
                 type: 'feedback_response', session_id: tab.pendingSessionId,
-                conversation_id: tab.conversationId, feedback: text, images: [],
+                conversation_id: tab.conversationId, feedback: text, images,
             }));
-            tab.messages.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
+            const msg = { role: 'user', content: text, timestamp: new Date().toISOString(), images };
+            tab.messages.push(msg);
             tab.pendingSessionId = null; tab.state = 'running';
             input.value = '';
+            clearImages();
             renderMessages(); renderTabBar(); updateSendButton(); saveState();
             if (vscode) vscode.postMessage({ type: 'feedback-submitted' });
         }
     }
+
+    // ── Image Handling ──────────────────────────────────
+    function addImage(base64) {
+        pendingImages.push(base64);
+        renderImagePreviews();
+        updateSendButton();
+    }
+
+    function removeImage(idx) {
+        pendingImages.splice(idx, 1);
+        renderImagePreviews();
+        updateSendButton();
+    }
+
+    function clearImages() {
+        pendingImages = [];
+        renderImagePreviews();
+    }
+
+    function renderImagePreviews() {
+        imagePreviews.innerHTML = '';
+        pendingImages.forEach((b64, idx) => {
+            const wrap = document.createElement('div'); wrap.className = 'img-preview';
+            const img = document.createElement('img');
+            img.src = 'data:image/png;base64,' + b64;
+            wrap.appendChild(img);
+            const rm = document.createElement('button'); rm.className = 'remove'; rm.textContent = '×';
+            rm.onclick = () => removeImage(idx);
+            wrap.appendChild(rm);
+            imagePreviews.appendChild(wrap);
+        });
+    }
+
+    function fileToBase64(file) {
+        return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onload = () => {
+                const result = reader.result;
+                const base64 = result.split(',')[1];
+                resolve(base64);
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    // Paste image from clipboard
+    document.addEventListener('paste', async (e) => {
+        const items = e.clipboardData?.items;
+        if (!items) return;
+        for (const item of items) {
+            if (item.type.startsWith('image/')) {
+                e.preventDefault();
+                const file = item.getAsFile();
+                if (file) {
+                    const b64 = await fileToBase64(file);
+                    addImage(b64);
+                }
+            }
+        }
+    });
+
+    // File picker
+    attachBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', async () => {
+        for (const file of fileInput.files) {
+            if (file.type.startsWith('image/')) {
+                const b64 = await fileToBase64(file);
+                addImage(b64);
+            }
+        }
+        fileInput.value = '';
+    });
 
     sendBtn.addEventListener('click', smartSend);
     input.addEventListener('input', updateSendButton);
