@@ -62,57 +62,19 @@ function fmtUser(text) {
 
 // ─── Pending ──────────────────────────────────────────────
 
-function getPending(conversationId, workspaceRoots) {
-    // Direct match first
-    if (conversationId) {
-        const direct = readJSON(path.join(PENDING_DIR, `${conversationId}.json`));
-        if (direct) return direct;
-    }
-
-    // Fallback: scan pending files matching workspace/server
-    return findAnyPending(workspaceRoots || []);
+function getPending(conversationId) {
+    if (!conversationId) return null;
+    return readJSON(path.join(PENDING_DIR, `${conversationId}.json`));
 }
 
 function hasPendingContent(p) {
     return p && ((p.comments && p.comments.length > 0) || (p.images && p.images.length > 0));
 }
 
-function findAnyPending(workspaceRoots) {
-    try {
-        if (!fs.existsSync(PENDING_DIR)) return null;
-        const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
-        const serverPid = findServerPid(workspaceRoots);
-        for (const f of files) {
-            const p = readJSON(path.join(PENDING_DIR, f));
-            if (!hasPendingContent(p)) continue;
-            if (serverPid && p.server_pid === serverPid) return p;
-        }
-        for (const f of files) {
-            const p = readJSON(path.join(PENDING_DIR, f));
-            if (hasPendingContent(p)) return p;
-        }
-    } catch {}
-    return null;
-}
-
 function consumePending(conversationId) {
     if (!conversationId) return;
-    // Direct match
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
-    try { if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return; } } catch {}
-
-    // Fallback: remove first pending file with any content (text or images)
-    try {
-        if (!fs.existsSync(PENDING_DIR)) return;
-        const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
-        for (const f of files) {
-            const p = readJSON(path.join(PENDING_DIR, f));
-            if (hasPendingContent(p)) {
-                try { fs.unlinkSync(path.join(PENDING_DIR, f)); } catch {}
-                break;
-            }
-        }
-    } catch {}
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
 }
 
 // ─── Server Matching ──────────────────────────────────────
@@ -183,7 +145,7 @@ function main() {
         const serverPid = findServerPid(workspaceRoots);
         const envOutput = serverPid ? { MCP_FEEDBACK_SERVER_PID: String(serverPid) } : {};
 
-        // Register session
+        // Register session only if server is already running
         if (conversationId && serverPid) {
             try {
                 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -208,7 +170,7 @@ function main() {
         }
 
         // Check for pending
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n');
             const imgCount = (pending.images || []).length;
@@ -234,7 +196,7 @@ function main() {
             return;
         }
 
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -251,7 +213,7 @@ function main() {
     // beforeShellExecution/beforeMCPExecution won't fire.
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
 
         if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
@@ -271,7 +233,7 @@ function main() {
     // ─── beforeShellExecution ─────────────────────────
     // Uses permission + user_message + agent_message. Consumes pending.
     if (hook === 'beforeShellExecution') {
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -287,7 +249,7 @@ function main() {
     }
 
     if (hook === 'beforeMCPExecution') {
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -305,7 +267,7 @@ function main() {
     // ─── subagentStart ───────────────────────────────
     // Uses permission/user_message per official docs. Consumes pending.
     if (hook === 'subagentStart') {
-        const pending = getPending(conversationId, workspaceRoots);
+        const pending = getPending(conversationId);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);

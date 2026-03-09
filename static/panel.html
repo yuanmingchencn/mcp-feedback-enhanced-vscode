@@ -127,13 +127,14 @@ body{
   font-weight:400;text-align:center;
   opacity:.7;
 }
-.msg-row.system .message .hint-badge{
+.hint-badge{
   display:inline-block;
   background:rgba(245,158,11,0.1);
   border:1px solid rgba(245,158,11,0.25);
-  color:#fbbf24;font-size:11px;font-weight:500;
-  padding:3px 10px;border-radius:12px;
-  letter-spacing:.2px;
+  color:#fbbf24;font-size:10px;font-weight:500;
+  padding:2px 8px;border-radius:10px;
+  letter-spacing:.2px;margin-left:6px;
+  vertical-align:middle;
 }
 .message .header{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fg-dim);margin-bottom:5px}
 .message .header .role{font-weight:700;text-transform:uppercase;letter-spacing:.5px}
@@ -559,6 +560,12 @@ const SESSION_ID = '{{SESSION_ID}}';
                 const r = document.createElement('span'); r.className = 'role';
                 r.textContent = msg.role === 'ai' ? '🤖 AI' : '👤 You';
                 h.appendChild(r);
+                if (msg.pending_delivered) {
+                    const badge = document.createElement('span');
+                    badge.className = 'hint-badge';
+                    badge.textContent = '📤 pending';
+                    h.appendChild(badge);
+                }
                 if (msg.timestamp) {
                     const t = document.createElement('span');
                     t.textContent = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
@@ -1006,16 +1013,14 @@ const SESSION_ID = '{{SESSION_ID}}';
                 const tab = tabs.get(msg.conversation_id);
                 if (tab) {
                     const comments = msg.comments || [];
-                    const imgCount = msg.image_count || 0;
-                    const parts = [];
-                    if (comments.length > 0) parts.push(comments.map(c => '"' + c + '"').join(', '));
-                    if (imgCount > 0) parts.push(imgCount + ' image' + (imgCount > 1 ? 's' : ''));
-                    if (parts.length > 0) {
-                        tab.messages.push({
-                            role: 'system',
-                            content: '<span class="hint-badge">📤 Delivered → Agent</span> ' + parts.join(' + '),
-                            timestamp: new Date().toISOString(),
-                        });
+                    const images = msg.images || [];
+                    for (let i = 0; i < comments.length; i++) {
+                        const m = { role: 'user', content: comments[i], timestamp: new Date().toISOString(), pending_delivered: true };
+                        if (i === comments.length - 1 && images.length > 0) m.images = images;
+                        tab.messages.push(m);
+                    }
+                    if (comments.length === 0 && images.length > 0) {
+                        tab.messages.push({ role: 'user', content: '', timestamp: new Date().toISOString(), pending_delivered: true, images });
                     }
                     tab.pendingQueue = [];
                     tab.pendingImages = [];

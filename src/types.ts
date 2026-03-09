@@ -28,6 +28,7 @@ export interface ConversationMessage {
     timestamp: string;
     session_id?: string;
     images?: string[];
+    pending_delivered?: boolean;
 }
 
 // Session registration (sessions/<conversation_id>.json), written by hooks

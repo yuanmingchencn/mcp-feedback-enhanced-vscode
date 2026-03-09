@@ -477,16 +477,14 @@ export class FeedbackWSServer {
         const filePath = path.join(pendingDir, `${conversationId}.json`);
 
         let lastKnownComments: string[] = [];
-        let lastKnownImageCount = 0;
+        let lastKnownImages: string[] = [];
 
         const timer = setInterval(() => {
-            // Re-read pending content on each poll so snapshot stays fresh
             try {
                 const data = readPending(conversationId);
                 if (data) {
                     if (data.comments?.length) lastKnownComments = data.comments;
-                    const imgLen = (data.images || []).length;
-                    if (imgLen > 0) lastKnownImageCount = imgLen;
+                    if (data.images?.length) lastKnownImages = data.images;
                 }
             } catch {}
 
@@ -498,15 +496,30 @@ export class FeedbackWSServer {
                 const deliveredComments = lastKnownComments.length > 0 ? lastKnownComments : (conv ? [...conv.pending_queue] : []);
 
                 if (conv) {
-                    const parts: string[] = [];
-                    if (deliveredComments.length > 0) parts.push(deliveredComments.map(c => `"${c}"`).join(', '));
-                    if (lastKnownImageCount > 0) parts.push(`${lastKnownImageCount} image${lastKnownImageCount > 1 ? 's' : ''}`);
-                    if (parts.length > 0) {
+                    // Store each pending comment as a user message with hint flag
+                    for (const comment of deliveredComments) {
                         conv.messages.push({
-                            role: 'system',
-                            content: `<span class="hint-badge">📤 Delivered → Agent</span> ${parts.join(' + ')}`,
+                            role: 'user',
+                            content: comment,
                             timestamp: new Date().toISOString(),
+                            pending_delivered: true,
                         });
+                    }
+                    // If there were images but no text, add a placeholder user message
+                    if (deliveredComments.length === 0 && lastKnownImages.length > 0) {
+                        conv.messages.push({
+                            role: 'user',
+                            content: '',
+                            timestamp: new Date().toISOString(),
+                            pending_delivered: true,
+                            images: lastKnownImages,
+                        });
+                    } else if (lastKnownImages.length > 0 && conv.messages.length > 0) {
+                        // Attach images to the last pending_delivered message
+                        const last = conv.messages[conv.messages.length - 1];
+                        if (last.pending_delivered) {
+                            last.images = lastKnownImages;
+                        }
                     }
                     conv.pending_queue = [];
                     writeConversation(conv);
@@ -516,7 +529,7 @@ export class FeedbackWSServer {
                     type: 'pending_delivered',
                     conversation_id: conversationId,
                     comments: deliveredComments,
-                    image_count: lastKnownImageCount,
+                    images: lastKnownImages,
                 });
             }
         }, 500);
@@ -548,7 +561,6 @@ export class FeedbackWSServer {
     }
 
     private _scanExistingSessions(): void {
-        // Load sessions for this PID (current lifecycle)
         const sessions = listSessions().filter(s => s.server_pid === process.pid);
         for (const session of sessions) {
             this._onSessionRegistered(session);
@@ -657,29 +669,12 @@ export class FeedbackWSServer {
     private _resolveConversationId(providedId: string): string {
         if (!providedId) return providedId;
 
-        // If there's already a conversation with this ID, use it directly
-        const existing = readConversation(providedId);
-        if (existing) return providedId;
+        // Direct match: conversation or session file exists with this ID
+        if (readConversation(providedId)) return providedId;
+        if (readSession(providedId)) return providedId;
 
-        // No match — LLM likely passed a custom ID. Find most recent active
-        // conversation for this workspace that was registered by sessionStart.
-        const myRoots = new Set(this.workspaces.map(w => w.replace(/\/+$/, '')));
-        const candidates = listConversations().filter(c => {
-            if (c.server_pid !== process.pid) return false;
-            if (c.state === 'archived') return false;
-            const roots = (c.workspace_roots || []).map(r => r.replace(/\/+$/, ''));
-            return roots.some(r => myRoots.has(r));
-        });
-
-        if (candidates.length > 0) {
-            // Sort by started_at descending, pick most recent
-            candidates.sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
-            const resolved = candidates[0].conversation_id;
-            // Resolved: providedId → resolved
-            return resolved;
-        }
-
-        // No candidates, use provided ID as-is
+        // No match — use as-is; _ensureConversation will create a new one.
+        // Don't guess/merge with other conversations to avoid cross-contamination.
         return providedId;
     }
 
