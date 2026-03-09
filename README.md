@@ -95,8 +95,8 @@ Each Cursor agent session has a unique UUID. The `sessionStart` hook injects thi
 
 ## For Developers
 
-- **NPM Package**: [`mcp-feedback-enhanced`](https://www.npmjs.com/package/mcp-feedback-enhanced)
 - **Repository**: [GitHub](https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode)
+- **Open VSX**: [mcp-feedback-enhanced](https://open-vsx.org/extension/mcp-feedback/mcp-feedback-enhanced)
 
 ---
 *Powered by [Model Context Protocol](https://modelcontextprotocol.io/)*
