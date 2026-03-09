@@ -67,7 +67,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Focus panels when agent requests feedback
     wsServer.onFeedbackRequest(() => {
         const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
-        if (cfg.get('showInSidebar', true)) {
+        if (cfg.get('showInSidebar', false)) {
             vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
         }
         if (cfg.get('showInBottomPanel', true)) {
@@ -164,7 +164,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Auto-open panels after initialization settles
     setTimeout(() => {
         const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
-        if (cfg.get('showInSidebar', true)) {
+        if (cfg.get('showInSidebar', false)) {
             vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
         }
         if (cfg.get('showInBottomPanel', true)) {

@@ -54,7 +54,7 @@
           "type": "webview",
           "id": "mcp-feedback-v2.feedbackPanel",
           "name": "Feedback",
-          "visibility": "visible",
+          "visibility": "hidden",
           "when": "config.mcp-feedback-v2.showInSidebar"
         }
       ],
@@ -73,7 +73,7 @@
       "properties": {
         "mcp-feedback-v2.showInSidebar": {
           "type": "boolean",
-          "default": true,
+          "default": false,
           "description": "Show MCP Feedback panel in the left sidebar"
         },
         "mcp-feedback-v2.showInBottomPanel": {
