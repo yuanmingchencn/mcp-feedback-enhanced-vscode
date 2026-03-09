@@ -138,10 +138,15 @@ body{
 
 .empty-state{
   display:flex;flex-direction:column;align-items:center;justify-content:center;
-  height:100%;color:var(--fg-dim);text-align:center;padding:24px;gap:10px;
+  height:100%;color:var(--fg-dim);text-align:center;padding:32px;gap:12px;
 }
-.empty-state .icon{font-size:36px;filter:grayscale(.3);animation:float 3s ease-in-out infinite}
-@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
+.empty-state .icon{
+  font-size:42px;animation:float 3s ease-in-out infinite;
+  filter:drop-shadow(0 0 12px rgba(124,58,237,0.3));
+}
+.empty-state .title{font-size:14px;font-weight:700;letter-spacing:1.5px;color:var(--fg)}
+.empty-state .sub{font-size:11px;opacity:.5;max-width:240px;line-height:1.5}
+@keyframes float{0%,100%{transform:translateY(0)}50%{transform:translateY(-6px)}}
 
 /* Pending */
 .pending-section{
@@ -207,10 +212,14 @@ body{
 .send-btn:active{transform:translateY(0)}
 .send-btn:disabled{opacity:.3;cursor:not-allowed;transform:none;box-shadow:none}
 .send-btn.queue-mode{
-  background:var(--surface);color:var(--fg-dim);
-  border:1px solid var(--border);box-shadow:none;
+  background:linear-gradient(135deg,rgba(245,158,11,0.1),rgba(251,191,36,0.05));
+  color:var(--accent);
+  border:1px solid rgba(245,158,11,0.3);box-shadow:none;
 }
-.send-btn.queue-mode:hover{border-color:var(--btn-bg);color:var(--fg);box-shadow:0 2px 8px rgba(124,58,237,0.15)}
+.send-btn.queue-mode:hover{
+  border-color:var(--accent);color:#fbbf24;
+  box-shadow:0 2px 10px rgba(245,158,11,0.2);transform:translateY(-1px);
+}
 
 /* Image preview */
 .image-previews{display:flex;gap:8px;padding:6px 12px;flex-wrap:wrap}
@@ -248,17 +257,33 @@ body{
 
 /* Settings */
 .settings-toggle{margin-left:auto;flex-shrink:0}
-.settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:12px;padding:0 2px;transition:color .15s}
-.settings-toggle button:hover{color:var(--fg)}
-.settings-panel{display:none;padding:10px 12px;border-top:1px solid var(--border);background:var(--surface)}
+.settings-toggle button{
+  background:transparent;border:1px solid transparent;color:var(--fg-dim);
+  cursor:pointer;font-size:12px;padding:2px 6px;
+  transition:all .2s;border-radius:4px;
+}
+.settings-toggle button:hover{color:var(--fg);border-color:var(--border);background:var(--surface)}
+.settings-panel{
+  display:none;padding:12px 14px;
+  border-top:1px solid var(--border);
+  background:linear-gradient(180deg,rgba(124,58,237,0.04),transparent);
+}
 .settings-panel.visible{display:block;animation:msg-in .2s ease-out}
-.settings-panel label{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px;cursor:pointer}
+.settings-panel label{
+  display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:10px;
+  cursor:pointer;padding:6px 10px;border-radius:8px;
+  transition:background .15s;
+}
+.settings-panel label:hover{background:var(--surface)}
+.settings-panel input[type="checkbox"]{
+  accent-color:#7c3aed;width:16px;height:16px;
+}
 .settings-panel input[type="text"]{
   width:100%;background:var(--input-bg);color:var(--fg);
-  border:1px solid var(--border);border-radius:6px;padding:5px 10px;
-  font-size:12px;margin-top:4px;transition:border-color .2s;
+  border:1px solid var(--border);border-radius:8px;padding:6px 12px;
+  font-size:12px;margin-top:4px;transition:all .2s;
 }
-.settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none}
+.settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.1)}
 </style>
 </head>
 <body>
@@ -280,9 +305,9 @@ body{
 <div class="messages" id="messages">
   <div class="empty-state" id="emptyState">
     <div class="icon">⚡</div>
-    <div style="font-weight:600;letter-spacing:.5px">AWAITING SIGNAL</div>
-    <div style="font-size:11px;opacity:.7">Agent will connect when it calls interactive_feedback</div>
-    <div style="font-size:11px;opacity:.5">Queue a message below to send when ready</div>
+    <div class="title">AWAITING SIGNAL</div>
+    <div class="sub">Agent will connect when it calls interactive_feedback</div>
+    <div class="sub">Queue a message below to send when ready</div>
   </div>
 </div>
 
