@@ -109,7 +109,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'open-in-editor':
-                    vscode.commands.executeCommand('mcp-feedback-v2.openInEditor');
+                    vscode.commands.executeCommand('mcp-feedback-enhanced.openInEditor');
                     break;
 
                 case 'reload-webview':
@@ -125,9 +125,9 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
 
     private _focusPanel(): void {
         if (this._location === 'sidebar') {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
         } else {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         }
     }
 

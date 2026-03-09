@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
@@ -23,7 +23,7 @@ const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 const STOP_LOOP_LIMIT = 3;
 const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
 
-const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-v2', 'mcp-feedback-enhanced'];
+const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced', 'mcp-feedback-enhanced'];
 
 function isAllowlisted(toolName) {
     if (!toolName) return false;

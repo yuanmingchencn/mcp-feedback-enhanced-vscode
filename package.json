@@ -1,6 +1,6 @@
 {
-  "name": "mcp-feedback-v2",
-  "displayName": "MCP Feedback V2",
+  "name": "mcp-feedback-enhanced",
+  "displayName": "MCP Feedback Enhanced",
   "description": "Interactive feedback collection for AI assistants with multi-session tabs",
   "version": "2.0.0",
   "publisher": "mcp-feedback",
@@ -35,48 +35,48 @@
     "viewsContainers": {
       "activitybar": [
         {
-          "id": "mcp-feedback-v2",
-          "title": "MCP Feedback V2",
+          "id": "mcp-feedback-enhanced",
+          "title": "MCP Feedback Enhanced",
           "icon": "resources/icon.svg"
         }
       ],
       "panel": [
         {
-          "id": "mcp-feedback-v2-bottom",
-          "title": "MCP Feedback V2",
+          "id": "mcp-feedback-enhanced-bottom",
+          "title": "MCP Feedback Enhanced",
           "icon": "resources/icon.svg"
         }
       ]
     },
     "views": {
-      "mcp-feedback-v2": [
+      "mcp-feedback-enhanced": [
         {
           "type": "webview",
-          "id": "mcp-feedback-v2.feedbackPanel",
+          "id": "mcp-feedback-enhanced.feedbackPanel",
           "name": "Feedback",
           "visibility": "hidden",
-          "when": "config.mcp-feedback-v2.showInSidebar"
+          "when": "config.mcp-feedback-enhanced.showInSidebar"
         }
       ],
-      "mcp-feedback-v2-bottom": [
+      "mcp-feedback-enhanced-bottom": [
         {
           "type": "webview",
-          "id": "mcp-feedback-v2.feedbackPanelBottom",
-          "name": "MCP Feedback V2",
+          "id": "mcp-feedback-enhanced.feedbackPanelBottom",
+          "name": "MCP Feedback Enhanced",
           "visibility": "visible",
-          "when": "config.mcp-feedback-v2.showInBottomPanel"
+          "when": "config.mcp-feedback-enhanced.showInBottomPanel"
         }
       ]
     },
     "configuration": {
-      "title": "MCP Feedback V2",
+      "title": "MCP Feedback Enhanced",
       "properties": {
-        "mcp-feedback-v2.showInSidebar": {
+        "mcp-feedback-enhanced.showInSidebar": {
           "type": "boolean",
           "default": false,
           "description": "Show MCP Feedback panel in the left sidebar"
         },
-        "mcp-feedback-v2.showInBottomPanel": {
+        "mcp-feedback-enhanced.showInBottomPanel": {
           "type": "boolean",
           "default": true,
           "description": "Show MCP Feedback panel in the bottom panel"
@@ -85,45 +85,45 @@
     },
     "commands": [
       {
-        "command": "mcp-feedback-v2.openPanel",
-        "title": "MCP Feedback V2: Open in Sidebar",
+        "command": "mcp-feedback-enhanced.openPanel",
+        "title": "MCP Feedback Enhanced: Open in Sidebar",
         "icon": "$(comment-discussion)"
       },
       {
-        "command": "mcp-feedback-v2.openInEditor",
-        "title": "MCP Feedback V2: Open in Editor (Tab)",
+        "command": "mcp-feedback-enhanced.openInEditor",
+        "title": "MCP Feedback Enhanced: Open in Editor (Tab)",
         "icon": "$(window)"
       },
       {
-        "command": "mcp-feedback-v2.openInBottom",
-        "title": "MCP Feedback V2: Open in Bottom Panel",
+        "command": "mcp-feedback-enhanced.openInBottom",
+        "title": "MCP Feedback Enhanced: Open in Bottom Panel",
         "icon": "$(panel)"
       },
       {
-        "command": "mcp-feedback-v2.reconnect",
-        "title": "MCP Feedback V2: Reconnect to Server"
+        "command": "mcp-feedback-enhanced.reconnect",
+        "title": "MCP Feedback Enhanced: Reconnect to Server"
       },
       {
-        "command": "mcp-feedback-v2.focusInput",
-        "title": "MCP Feedback V2: Focus Input Field"
+        "command": "mcp-feedback-enhanced.focusInput",
+        "title": "MCP Feedback Enhanced: Focus Input Field"
       },
       {
-        "command": "mcp-feedback-v2.forceReset",
-        "title": "MCP Feedback V2: Force Reset (Restart Server)"
+        "command": "mcp-feedback-enhanced.forceReset",
+        "title": "MCP Feedback Enhanced: Force Reset (Restart Server)"
       },
       {
-        "command": "mcp-feedback-v2.showStatus",
-        "title": "MCP Feedback V2: Show Status"
+        "command": "mcp-feedback-enhanced.showStatus",
+        "title": "MCP Feedback Enhanced: Show Status"
       }
     ],
     "keybindings": [
       {
-        "command": "mcp-feedback-v2.openPanel",
+        "command": "mcp-feedback-enhanced.openPanel",
         "key": "ctrl+shift+m",
         "mac": "cmd+shift+m"
       },
       {
-        "command": "mcp-feedback-v2.focusInput",
+        "command": "mcp-feedback-enhanced.focusInput",
         "key": "ctrl+shift+f",
         "mac": "cmd+shift+f"
       }

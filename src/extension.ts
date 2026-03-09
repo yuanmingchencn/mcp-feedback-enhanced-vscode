@@ -66,12 +66,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Focus panels when agent requests feedback
     wsServer.onFeedbackRequest(() => {
-        const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
+        const cfg = vscode.workspace.getConfiguration('mcp-feedback-enhanced');
         if (cfg.get('showInSidebar', false)) {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
         }
         if (cfg.get('showInBottomPanel', true)) {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         }
     });
 
@@ -100,12 +100,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     // Register view providers
     disposables.push(
         vscode.window.registerWebviewViewProvider(
-            'mcp-feedback-v2.feedbackPanel',
+            'mcp-feedback-enhanced.feedbackPanel',
             sidebarProvider,
             { webviewOptions: { retainContextWhenHidden: false } }
         ),
         vscode.window.registerWebviewViewProvider(
-            'mcp-feedback-v2.feedbackPanelBottom',
+            'mcp-feedback-enhanced.feedbackPanelBottom',
             bottomProvider,
             { webviewOptions: { retainContextWhenHidden: false } }
         ),
@@ -113,24 +113,24 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Register commands
     disposables.push(
-        vscode.commands.registerCommand('mcp-feedback-v2.openPanel', () => {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        vscode.commands.registerCommand('mcp-feedback-enhanced.openPanel', () => {
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.focusInput', () => {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        vscode.commands.registerCommand('mcp-feedback-enhanced.focusInput', () => {
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
             sidebarProvider.focusInput();
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.openInEditor', () => {
+        vscode.commands.registerCommand('mcp-feedback-enhanced.openInEditor', () => {
             _openEditorPanel(context, port);
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.openInBottom', () => {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+        vscode.commands.registerCommand('mcp-feedback-enhanced.openInBottom', () => {
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.reconnect', () => {
+        vscode.commands.registerCommand('mcp-feedback-enhanced.reconnect', () => {
             sidebarProvider.reconnect();
             bottomProvider.reconnect();
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.forceReset', async () => {
+        vscode.commands.registerCommand('mcp-feedback-enhanced.forceReset', async () => {
             try {
                 const newPort = await forceResetCallback();
                 vscode.window.showInformationMessage(`MCP Feedback: Reset! Server on port ${newPort}`);
@@ -138,7 +138,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
                 vscode.window.showErrorMessage(`MCP Feedback: Reset failed - ${e}`);
             }
         }),
-        vscode.commands.registerCommand('mcp-feedback-v2.showStatus', () => {
+        vscode.commands.registerCommand('mcp-feedback-enhanced.showStatus', () => {
             const clients = wsServer.getConnectedClients();
             vscode.window.showInformationMessage(
                 `MCP Feedback Status:\nPort: ${port}\nWebviews: ${clients.webviews}\nMCP Servers: ${clients.mcpServers}\nPending requests: ${wsServer.hasPendingRequests() ? 'Yes' : 'No'}`
@@ -163,12 +163,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     // Auto-open panels after initialization settles
     setTimeout(() => {
-        const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
+        const cfg = vscode.workspace.getConfiguration('mcp-feedback-enhanced');
         if (cfg.get('showInSidebar', false)) {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
         }
         if (cfg.get('showInBottomPanel', true)) {
-            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         }
     }, 2000);
 }
@@ -209,18 +209,18 @@ function ensureMcpConfig(extensionPath: string): void {
 
         const mcpServers = (config.mcpServers || {}) as Record<string, unknown>;
 
-        // Point to the local build of the v2 MCP server
+        // Point to the local build of the MCP server
         const localServerPath = path.join(extensionPath, 'mcp-server', 'dist', 'index.js');
         const expectedCommand = 'node';
         const expectedArgs = [localServerPath];
 
-        const existing = mcpServers['mcp-feedback-v2'] as Record<string, unknown> | undefined;
+        const existing = mcpServers['mcp-feedback-enhanced'] as Record<string, unknown> | undefined;
         if (existing?.command === expectedCommand &&
             JSON.stringify(existing?.args) === JSON.stringify(expectedArgs)) {
             return;
         }
 
-        mcpServers['mcp-feedback-v2'] = {
+        mcpServers['mcp-feedback-enhanced'] = {
             command: expectedCommand,
             args: expectedArgs,
         };
@@ -245,7 +245,7 @@ function deployCursorHooks(extensionPath: string): void {
         }
 
         // Copy hook script to config dir
-        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-v2', 'hooks');
+        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
         const targetHook = path.join(targetDir, 'check-pending.js');
         fs.mkdirSync(targetDir, { recursive: true });
         fs.copyFileSync(sourceHook, targetHook);
@@ -264,7 +264,7 @@ function deployCursorHooks(extensionPath: string): void {
         const hooks = (hooksConfig.hooks || {}) as Record<string, Array<Record<string, unknown>>>;
         const hookPoints = ['sessionStart', 'stop', 'preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'subagentStart'];
         const hookCommand = `node ${targetHook}`;
-        const SOURCE_TAG = 'mcp-feedback-v2';
+        const SOURCE_TAG = 'mcp-feedback-enhanced';
 
         for (const event of hookPoints) {
             if (!hooks[event]) { hooks[event] = []; }
