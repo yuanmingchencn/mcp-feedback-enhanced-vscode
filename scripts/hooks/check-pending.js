@@ -23,7 +23,7 @@ const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 const STOP_LOOP_LIMIT = 3;
 const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
 
-const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced', 'mcp-feedback-enhanced'];
+const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
 
 function isAllowlisted(toolName) {
     if (!toolName) return false;
@@ -73,21 +73,23 @@ function getPending(conversationId, workspaceRoots) {
     return findAnyPending(workspaceRoots || []);
 }
 
+function hasPendingContent(p) {
+    return p && ((p.comments && p.comments.length > 0) || (p.images && p.images.length > 0));
+}
+
 function findAnyPending(workspaceRoots) {
     try {
         if (!fs.existsSync(PENDING_DIR)) return null;
         const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
-        // Find matching server first
         const serverPid = findServerPid(workspaceRoots);
         for (const f of files) {
             const p = readJSON(path.join(PENDING_DIR, f));
-            if (!p || !p.comments || p.comments.length === 0) continue;
+            if (!hasPendingContent(p)) continue;
             if (serverPid && p.server_pid === serverPid) return p;
         }
-        // Fallback: any pending file
         for (const f of files) {
             const p = readJSON(path.join(PENDING_DIR, f));
-            if (p && p.comments && p.comments.length > 0) return p;
+            if (hasPendingContent(p)) return p;
         }
     } catch {}
     return null;
@@ -207,10 +209,14 @@ function main() {
 
         // Check for pending
         const pending = getPending(conversationId, workspaceRoots);
-        if (pending && pending.comments && pending.comments.length > 0) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending)) {
+            const combined = (pending.comments || []).join('\n\n');
+            const imgCount = (pending.images || []).length;
             consumePending(conversationId);
-            contextParts.push(`\n[Pending User Message]\n${combined}`);
+            const parts = [];
+            if (combined) parts.push(combined);
+            if (imgCount > 0) parts.push(`[${imgCount} image(s) attached — will be delivered via interactive_feedback]`);
+            contextParts.push(`\n[Pending User Message]\n${parts.join('\n')}`);
         }
 
         output({
@@ -229,8 +235,8 @@ function main() {
         }
 
         const pending = getPending(conversationId, workspaceRoots);
-        if (pending && pending.comments && pending.comments.length > 0) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending)) {
+            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
             output({ followup_message: fmtAgent(combined) });
         } else {
@@ -247,8 +253,8 @@ function main() {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
-        if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(toolName)) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
+            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
             output({
                 permission: 'deny',
@@ -266,8 +272,8 @@ function main() {
     // Uses permission + user_message + agent_message. Consumes pending.
     if (hook === 'beforeShellExecution') {
         const pending = getPending(conversationId, workspaceRoots);
-        if (pending && pending.comments && pending.comments.length > 0) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending)) {
+            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
             output({
                 permission: 'deny',
@@ -280,14 +286,12 @@ function main() {
         return;
     }
 
-    // ─── beforeMCPExecution ──────────────────────────
-    // Uses permission. Allowlisted tools pass through but still get pending injected.
     if (hook === 'beforeMCPExecution') {
         const mcpTool = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
-        if (pending && pending.comments && pending.comments.length > 0) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending)) {
+            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             if (isAllowlisted(mcpTool)) {
                 consumePending(conversationId);
                 output({
@@ -312,12 +316,12 @@ function main() {
     // Uses permission/user_message per official docs. Consumes pending.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId, workspaceRoots);
-        if (pending && pending.comments && pending.comments.length > 0) {
-            const combined = pending.comments.join('\n\n');
+        if (hasPendingContent(pending)) {
+            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
             output({
                 permission: 'deny',
-                user_message: fmtAgent(combined),
+                user_message: fmtUser(combined),
             });
             return;
         }

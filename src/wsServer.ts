@@ -476,18 +476,20 @@ export class FeedbackWSServer {
         const pendingDir = getPendingDir();
         const filePath = path.join(pendingDir, `${conversationId}.json`);
 
-        // Snapshot what's in the pending file so we can report after hook consumes it
         let lastKnownComments: string[] = [];
         let lastKnownImageCount = 0;
-        try {
-            const data = readPending(conversationId);
-            if (data) {
-                lastKnownComments = data.comments || [];
-                lastKnownImageCount = (data.images || []).length;
-            }
-        } catch {}
 
         const timer = setInterval(() => {
+            // Re-read pending content on each poll so snapshot stays fresh
+            try {
+                const data = readPending(conversationId);
+                if (data) {
+                    if (data.comments?.length) lastKnownComments = data.comments;
+                    const imgLen = (data.images || []).length;
+                    if (imgLen > 0) lastKnownImageCount = imgLen;
+                }
+            } catch {}
+
             if (!fs.existsSync(filePath)) {
                 clearInterval(timer);
                 this.pendingWatchers.delete(conversationId);
@@ -562,11 +564,14 @@ export class FeedbackWSServer {
         });
 
         for (const conv of restoredConvs) {
-            // Adopt this conversation: update server_pid to current process
             conv.server_pid = process.pid;
             if (conv.state === 'waiting') {
-                conv.state = 'idle'; // can't be waiting after restart
+                conv.state = 'idle';
                 conv.active_session_id = null;
+            }
+            // Clear stale pending_queue if no pending file exists
+            if (conv.pending_queue.length > 0 && !readPending(conv.conversation_id)) {
+                conv.pending_queue = [];
             }
             writeConversation(conv);
 
@@ -683,9 +688,16 @@ export class FeedbackWSServer {
     private _ensureConversation(conversationId: string, sessionId: string, summary?: string): void {
         let conv = readConversation(conversationId);
         const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
-        const label = summary
-            ? (summary.length > 40 ? summary.slice(0, 40) + '...' : summary)
-            : `Agent | ${time}`;
+        let label: string;
+        if (summary) {
+            label = summary.length > 40 ? summary.slice(0, 40) + '...' : summary;
+        } else if (conv?.label) {
+            label = conv.label; // Keep existing label
+        } else {
+            const allConvs = listConversations().filter(c => c.server_pid === process.pid && c.state !== 'archived');
+            const chatNum = allConvs.length + 1;
+            label = `#${chatNum} | ${time}`;
+        }
 
         if (!conv) {
             conv = {
