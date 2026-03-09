@@ -581,7 +581,8 @@ export class FeedbackWSServer {
         // Create or update conversation data
         let conv = readConversation(session.conversation_id);
         if (!conv) {
-            const idPrefix = session.conversation_id.slice(0, 8);
+            const allConvs = listConversations().filter(c => c.server_pid === process.pid && c.state !== 'archived');
+            const chatNum = allConvs.length + 1;
             const time = new Date(session.started_at).toLocaleTimeString('en-US', {
                 hour: '2-digit', minute: '2-digit', hour12: false,
             });
@@ -591,7 +592,7 @@ export class FeedbackWSServer {
                 workspace_roots: session.workspace_roots,
                 started_at: session.started_at,
                 ended_at: null,
-                label: `${idPrefix} | ${time}`,
+                label: `#${chatNum} | ${time}`,
                 state: 'idle',
                 messages: [],
                 pending_queue: [],
