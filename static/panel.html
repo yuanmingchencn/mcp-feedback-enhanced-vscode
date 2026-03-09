@@ -545,9 +545,16 @@ const SESSION_ID = '{{SESSION_ID}}';
 
             case 'feedback_submitted': {
                 const tab = tabs.get(msg.conversation_id);
-                if (tab && tab.pendingSessionId === msg.session_id) {
+                if (tab) {
+                    const last = tab.messages[tab.messages.length - 1];
+                    const alreadyHas = last && last.role === 'user' && last.content === msg.feedback;
+                    if (msg.feedback && !alreadyHas) {
+                        tab.messages.push({ role: 'user', content: msg.feedback, timestamp: new Date().toISOString() });
+                    }
                     tab.pendingSessionId = null; tab.state = 'running';
-                    renderTabBar(); updateSendButton(); saveState();
+                    renderTabBar(); updateSendButton();
+                    if (msg.conversation_id === activeTabId) renderMessages();
+                    saveState();
                 }
                 break;
             }

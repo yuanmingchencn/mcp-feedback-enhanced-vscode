@@ -351,11 +351,12 @@ export class FeedbackWSServer {
         pending.resolve(feedbackWithReminder);
         this.pendingRequests.delete(res.session_id);
 
-        // Notify webviews
         this._broadcastToWebviews({
             type: 'feedback_submitted',
             session_id: res.session_id,
             conversation_id: convId,
+            feedback: res.feedback,
+            images: res.images,
         });
     }
 
