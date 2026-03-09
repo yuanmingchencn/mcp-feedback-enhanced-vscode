@@ -158,13 +158,26 @@ body{
 .pending-item button:hover{opacity:1;background:rgba(245,158,11,0.1)}
 
 /* Quick Replies */
-.quick-replies{display:flex;gap:5px;padding:5px 12px;flex-wrap:wrap}
+.quick-replies{display:flex;gap:6px;padding:6px 12px;flex-wrap:wrap}
 .quick-reply-btn{
-  background:var(--surface);border:1px solid var(--border);color:var(--fg-dim);
-  border-radius:16px;padding:4px 12px;cursor:pointer;font-size:11px;
-  transition:all .2s;letter-spacing:.2px;
+  background:linear-gradient(135deg,rgba(124,58,237,0.06),rgba(16,185,129,0.06));
+  border:1px solid rgba(124,58,237,0.2);color:var(--fg-dim);
+  border-radius:20px;padding:5px 14px;cursor:pointer;font-size:11px;
+  transition:all .25s cubic-bezier(.4,0,.2,1);letter-spacing:.3px;
+  position:relative;overflow:hidden;
 }
-.quick-reply-btn:hover{border-color:var(--btn-bg);color:var(--fg);background:rgba(124,58,237,0.08)}
+.quick-reply-btn::before{
+  content:'';position:absolute;inset:0;
+  background:linear-gradient(135deg,rgba(124,58,237,0.15),rgba(16,185,129,0.1));
+  opacity:0;transition:opacity .25s;
+}
+.quick-reply-btn:hover{
+  border-color:var(--btn-bg);color:var(--fg);
+  transform:translateY(-1px);
+  box-shadow:0 2px 10px rgba(124,58,237,0.2);
+}
+.quick-reply-btn:hover::before{opacity:1}
+.quick-reply-btn:active{transform:translateY(0);box-shadow:none}
 
 /* Input */
 .input-area{padding:8px 12px 10px;border-top:1px solid var(--border);background:var(--surface)}
@@ -277,10 +290,10 @@ body{
 </div>
 
 <div class="quick-replies" id="quickReplies">
-  <button class="quick-reply-btn" data-text="Continue">Continue</button>
-  <button class="quick-reply-btn" data-text="Looks good">Good</button>
-  <button class="quick-reply-btn" data-text="Please fix the issues">Fix</button>
-  <button class="quick-reply-btn" data-text="Stop, I want to review first">Stop</button>
+  <button class="quick-reply-btn" data-text="Continue">▸ Continue</button>
+  <button class="quick-reply-btn" data-text="Looks good, proceed">✓ LGTM</button>
+  <button class="quick-reply-btn" data-text="Please fix the issues">⚡ Fix</button>
+  <button class="quick-reply-btn" data-text="Stop, let me review first">◼ Pause</button>
 </div>
 
 <div class="image-previews" id="imagePreviews"></div>
