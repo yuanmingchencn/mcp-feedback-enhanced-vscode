@@ -120,13 +120,14 @@ body{
 }
 .msg-row.system .message{
   background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(251,191,36,0.04));
-  font-size:11px;color:#fbbf24;
-  padding:6px 14px;max-width:90%;
+  font-size:12.5px;color:#fbbf24;
+  padding:8px 16px;max-width:90%;
   letter-spacing:.3px;
   border:1px solid rgba(245,158,11,0.2);
   border-radius:8px;
   font-weight:500;
   text-align:center;
+  line-height:1.5;
 }
 .message .header{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fg-dim);margin-bottom:5px}
 .message .header .role{font-weight:700;text-transform:uppercase;letter-spacing:.5px}
@@ -157,15 +158,20 @@ body{
   backdrop-filter:blur(4px);
 }
 .pending-section.visible{display:block;animation:msg-in .2s ease-out}
-.pending-header{display:flex;justify-content:space-between;align-items:center;font-size:10px;color:var(--accent);margin-bottom:6px;letter-spacing:.5px;text-transform:uppercase;font-weight:600}
+.pending-header{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--accent);margin-bottom:6px;letter-spacing:.5px;text-transform:uppercase;font-weight:600}
+.pending-header button{
+  background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#f87171;
+  border-radius:6px;padding:3px 8px;cursor:pointer;font-size:12px;transition:all .15s;
+}
+.pending-header button:hover{background:rgba(239,68,68,0.2);color:#fca5a5}
 .pending-item{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
 .pending-item .text{flex:1;word-break:break-word}
 .pending-item button{
-  background:transparent;border:1px solid rgba(245,158,11,0.3);color:var(--accent);
-  border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px;opacity:.7;
-  transition:all .15s;
+  background:rgba(245,158,11,0.06);border:1px solid rgba(245,158,11,0.3);color:var(--accent);
+  border-radius:6px;padding:4px 10px;cursor:pointer;font-size:13px;opacity:.8;
+  transition:all .15s;min-width:28px;text-align:center;
 }
-.pending-item button:hover{opacity:1;background:rgba(245,158,11,0.1)}
+.pending-item button:hover{opacity:1;background:rgba(245,158,11,0.15);transform:scale(1.05)}
 
 /* Quick Replies */
 .quick-replies{display:flex;gap:6px;padding:6px 12px;flex-wrap:wrap}
@@ -258,32 +264,41 @@ body{
 /* Settings */
 .settings-toggle{margin-left:auto;flex-shrink:0}
 .settings-toggle button{
-  background:transparent;border:1px solid transparent;color:var(--fg-dim);
-  cursor:pointer;font-size:12px;padding:2px 6px;
-  transition:all .2s;border-radius:4px;
+  background:var(--surface);border:1px solid var(--border);color:var(--fg-dim);
+  cursor:pointer;font-size:14px;padding:3px 8px;
+  transition:all .2s;border-radius:6px;
 }
-.settings-toggle button:hover{color:var(--fg);border-color:var(--border);background:var(--surface)}
+.settings-toggle button:hover{
+  color:var(--fg);border-color:rgba(124,58,237,0.4);
+  background:rgba(124,58,237,0.08);
+  box-shadow:0 0 8px rgba(124,58,237,0.15);
+}
 .settings-panel{
-  display:none;padding:12px 14px;
+  display:none;padding:14px 16px;
   border-top:1px solid var(--border);
-  background:linear-gradient(180deg,rgba(124,58,237,0.04),transparent);
+  background:linear-gradient(180deg,rgba(124,58,237,0.06),rgba(124,58,237,0.02));
 }
 .settings-panel.visible{display:block;animation:msg-in .2s ease-out}
-.settings-panel label{
-  display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:10px;
-  cursor:pointer;padding:6px 10px;border-radius:8px;
-  transition:background .15s;
+.settings-panel-title{
+  font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
+  color:#a78bfa;margin-bottom:12px;
+  padding-bottom:6px;border-bottom:1px solid rgba(124,58,237,0.15);
 }
-.settings-panel label:hover{background:var(--surface)}
+.settings-panel label{
+  display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:8px;
+  cursor:pointer;padding:8px 12px;border-radius:8px;
+  border:1px solid transparent;transition:all .15s;
+}
+.settings-panel label:hover{background:var(--surface);border-color:var(--border)}
 .settings-panel input[type="checkbox"]{
-  accent-color:#7c3aed;width:16px;height:16px;
+  accent-color:#7c3aed;width:16px;height:16px;cursor:pointer;
 }
 .settings-panel input[type="text"]{
   width:100%;background:var(--input-bg);color:var(--fg);
-  border:1px solid var(--border);border-radius:8px;padding:6px 12px;
+  border:1px solid var(--border);border-radius:8px;padding:7px 12px;
   font-size:12px;margin-top:4px;transition:all .2s;
 }
-.settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.1)}
+.settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.12)}
 </style>
 </head>
 <body>
@@ -298,6 +313,7 @@ body{
   <div class="settings-toggle"><button id="settingsBtn" title="Settings">⚙</button></div>
 </div>
 <div class="settings-panel" id="settingsPanel">
+  <div class="settings-panel-title">Settings</div>
   <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
   <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
 </div>
@@ -636,7 +652,7 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     clearPendingBtn.addEventListener('click', () => {
         const tab = activeTabId ? tabs.get(activeTabId) : null;
-        if (tab && confirm('Clear all pending?')) { tab.pendingQueue = []; syncPending(); }
+        if (tab) { tab.pendingQueue = []; tab.pendingImages = []; syncPending(); }
     });
 
     // ── Smart Send ───────────────────────────────────────
