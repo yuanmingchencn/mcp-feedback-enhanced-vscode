@@ -669,6 +669,11 @@ export class FeedbackWSServer {
 
     private _ensureConversation(conversationId: string, sessionId: string, summary?: string): void {
         let conv = readConversation(conversationId);
+        const time = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false });
+        const label = summary
+            ? (summary.length > 40 ? summary.slice(0, 40) + '...' : summary)
+            : `Agent | ${time}`;
+
         if (!conv) {
             conv = {
                 conversation_id: conversationId,
@@ -676,7 +681,7 @@ export class FeedbackWSServer {
                 workspace_roots: this.workspaces,
                 started_at: Date.now(),
                 ended_at: null,
-                label: `Agent | ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}`,
+                label,
                 state: 'waiting',
                 messages: [],
                 pending_queue: [],
@@ -688,8 +693,8 @@ export class FeedbackWSServer {
 
         conv.state = 'waiting';
         conv.active_session_id = sessionId;
-
         if (summary) {
+            conv.label = label;
             conv.messages.push({
                 role: 'ai',
                 content: summary,

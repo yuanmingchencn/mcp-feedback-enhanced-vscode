@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Start WebSocket server
- * - Register sidebar, bottom, and editor webview providers
+ * - Register bottom panel and editor webview providers
  * - Deploy Cursor hooks
  * - Auto-configure MCP server in Cursor's mcp.json
  * - Register commands
@@ -17,7 +17,6 @@ import { FeedbackWSServer } from './wsServer';
 import { FeedbackViewProvider } from './feedbackViewProvider';
 
 let wsServer: FeedbackWSServer;
-let sidebarProvider: FeedbackViewProvider;
 let bottomProvider: FeedbackViewProvider;
 const disposables: vscode.Disposable[] = [];
 
@@ -30,7 +29,6 @@ function getCursorTraceId(): string {
 }
 
 function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
-    // Try static/panel.html first (source), then out/webview/panel.html (build artifact)
     const candidates = [
         path.join(extensionPath, 'static', 'panel.html'),
         path.join(extensionPath, 'out', 'webview', 'panel.html'),
@@ -51,7 +49,6 @@ function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     console.log('[MCP Feedback] Activating extension...');
 
-    // Start WebSocket server
     wsServer = new FeedbackWSServer();
     wsServer.setWorkspaces(getWorkspaces());
     wsServer.setCursorTraceId(getCursorTraceId());
@@ -64,46 +61,26 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
     }
 
-    // Focus panels when agent requests feedback
     wsServer.onFeedbackRequest(() => {
-        const cfg = vscode.workspace.getConfiguration('mcp-feedback-enhanced');
-        if (cfg.get('showInSidebar', false)) {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
-        }
-        if (cfg.get('showInBottomPanel', true)) {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
-        }
+        vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
     });
 
-    // Create providers
     const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
-
-    sidebarProvider = new FeedbackViewProvider(getHtml, 'sidebar');
     bottomProvider = new FeedbackViewProvider(getHtml, 'bottom');
 
-    // Register force reset callback
     const forceResetCallback = async (): Promise<number> => {
         await wsServer.stop();
         wsServer.setWorkspaces(getWorkspaces());
         wsServer.setCursorTraceId(getCursorTraceId());
         const newPort = await wsServer.start();
         port = newPort;
-        sidebarProvider.updateHtmlGetter(() => _loadWebviewHtml(context.extensionPath, newPort));
         bottomProvider.updateHtmlGetter(() => _loadWebviewHtml(context.extensionPath, newPort));
-        sidebarProvider.recreate();
         bottomProvider.recreate();
         return newPort;
     };
-    sidebarProvider.onForceReset(forceResetCallback);
     bottomProvider.onForceReset(forceResetCallback);
 
-    // Register view providers
     disposables.push(
-        vscode.window.registerWebviewViewProvider(
-            'mcp-feedback-enhanced.feedbackPanel',
-            sidebarProvider,
-            { webviewOptions: { retainContextWhenHidden: false } }
-        ),
         vscode.window.registerWebviewViewProvider(
             'mcp-feedback-enhanced.feedbackPanelBottom',
             bottomProvider,
@@ -111,15 +88,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         ),
     );
 
-    // Register commands
     disposables.push(
-        vscode.commands.registerCommand('mcp-feedback-enhanced.openPanel', () => {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
-        }),
-        vscode.commands.registerCommand('mcp-feedback-enhanced.focusInput', () => {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
-            sidebarProvider.focusInput();
-        }),
         vscode.commands.registerCommand('mcp-feedback-enhanced.openInEditor', () => {
             _openEditorPanel(context, port);
         }),
@@ -127,7 +96,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
             vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         }),
         vscode.commands.registerCommand('mcp-feedback-enhanced.reconnect', () => {
-            sidebarProvider.reconnect();
             bottomProvider.reconnect();
         }),
         vscode.commands.registerCommand('mcp-feedback-enhanced.forceReset', async () => {
@@ -146,7 +114,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
     );
 
-    // Watch workspace changes
     disposables.push(
         vscode.workspace.onDidChangeWorkspaceFolders(() => {
             wsServer.setWorkspaces(getWorkspaces());
@@ -154,22 +121,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         }),
     );
 
-    // Auto-configure MCP and deploy hooks
     ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
 
     context.subscriptions.push(...disposables);
     console.log(`[MCP Feedback] Activated on port ${port}`);
 
-    // Auto-open panels after initialization settles
     setTimeout(() => {
-        const cfg = vscode.workspace.getConfiguration('mcp-feedback-enhanced');
-        if (cfg.get('showInSidebar', false)) {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
-        }
-        if (cfg.get('showInBottomPanel', true)) {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
-        }
+        vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
     }, 2000);
 }
 
@@ -179,8 +138,6 @@ export function deactivate(): void {
     disposables.length = 0;
     wsServer?.stop();
 }
-
-// ─── Editor Panel ─────────────────────────────────────────
 
 function _openEditorPanel(context: vscode.ExtensionContext, port: number): void {
     const panel = vscode.window.createWebviewPanel(
@@ -196,8 +153,6 @@ function _openEditorPanel(context: vscode.ExtensionContext, port: number): void 
     panel.webview.html = _loadWebviewHtml(context.extensionPath, port);
 }
 
-// ─── MCP Auto-Config ──────────────────────────────────────
-
 function ensureMcpConfig(extensionPath: string): void {
     try {
         const mcpConfigPath = path.join(os.homedir(), '.cursor', 'mcp.json');
@@ -208,8 +163,6 @@ function ensureMcpConfig(extensionPath: string): void {
         }
 
         const mcpServers = (config.mcpServers || {}) as Record<string, unknown>;
-
-        // Point to the local build of the MCP server
         const localServerPath = path.join(extensionPath, 'mcp-server', 'dist', 'index.js');
         const expectedCommand = 'node';
         const expectedArgs = [localServerPath];
@@ -234,8 +187,6 @@ function ensureMcpConfig(extensionPath: string): void {
     }
 }
 
-// ─── Cursor Hooks Deployment ──────────────────────────────
-
 function deployCursorHooks(extensionPath: string): void {
     try {
         const sourceHook = path.join(extensionPath, 'scripts', 'hooks', 'check-pending.js');
@@ -244,14 +195,11 @@ function deployCursorHooks(extensionPath: string): void {
             return;
         }
 
-        // Copy hook script to config dir
         const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
         const targetHook = path.join(targetDir, 'check-pending.js');
         fs.mkdirSync(targetDir, { recursive: true });
         fs.copyFileSync(sourceHook, targetHook);
 
-        // Update ~/.cursor/hooks.json
-        // Cursor format: { version: 1, hooks: { "eventType": [{ command, _source }] } }
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
 
@@ -268,9 +216,7 @@ function deployCursorHooks(extensionPath: string): void {
 
         for (const event of hookPoints) {
             if (!hooks[event]) { hooks[event] = []; }
-            // Remove existing entries from us
             hooks[event] = hooks[event].filter(h => h._source !== SOURCE_TAG);
-            // Add our entry
             hooks[event].push({
                 command: hookCommand,
                 _source: SOURCE_TAG,

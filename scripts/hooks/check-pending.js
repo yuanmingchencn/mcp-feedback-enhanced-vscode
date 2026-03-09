@@ -241,13 +241,15 @@ function main() {
 
     // ─── preToolUse ───────────────────────────────────
     // Uses permission/user_message/agent_message per official docs.
-    // Never consumes pending — beforeShellExecution/beforeMCPExecution will also fire and consume there.
+    // Must consume pending here because when preToolUse denies,
+    // beforeShellExecution/beforeMCPExecution won't fire.
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
         if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(toolName)) {
             const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
             output({
                 permission: 'deny',
                 user_message: fmtUser(combined),

@@ -33,13 +33,6 @@
   "main": "./out/extension.js",
   "contributes": {
     "viewsContainers": {
-      "activitybar": [
-        {
-          "id": "mcp-feedback-enhanced",
-          "title": "MCP Feedback Enhanced",
-          "icon": "resources/icon.svg"
-        }
-      ],
       "panel": [
         {
           "id": "mcp-feedback-enhanced-bottom",
@@ -49,46 +42,16 @@
       ]
     },
     "views": {
-      "mcp-feedback-enhanced": [
-        {
-          "type": "webview",
-          "id": "mcp-feedback-enhanced.feedbackPanel",
-          "name": "Feedback",
-          "visibility": "hidden",
-          "when": "config.mcp-feedback-enhanced.showInSidebar"
-        }
-      ],
       "mcp-feedback-enhanced-bottom": [
         {
           "type": "webview",
           "id": "mcp-feedback-enhanced.feedbackPanelBottom",
           "name": "MCP Feedback Enhanced",
-          "visibility": "visible",
-          "when": "config.mcp-feedback-enhanced.showInBottomPanel"
+          "visibility": "visible"
         }
       ]
     },
-    "configuration": {
-      "title": "MCP Feedback Enhanced",
-      "properties": {
-        "mcp-feedback-enhanced.showInSidebar": {
-          "type": "boolean",
-          "default": false,
-          "description": "Show MCP Feedback panel in the left sidebar"
-        },
-        "mcp-feedback-enhanced.showInBottomPanel": {
-          "type": "boolean",
-          "default": true,
-          "description": "Show MCP Feedback panel in the bottom panel"
-        }
-      }
-    },
     "commands": [
-      {
-        "command": "mcp-feedback-enhanced.openPanel",
-        "title": "MCP Feedback Enhanced: Open in Sidebar",
-        "icon": "$(comment-discussion)"
-      },
       {
         "command": "mcp-feedback-enhanced.openInEditor",
         "title": "MCP Feedback Enhanced: Open in Editor (Tab)",
@@ -104,28 +67,12 @@
         "title": "MCP Feedback Enhanced: Reconnect to Server"
       },
       {
-        "command": "mcp-feedback-enhanced.focusInput",
-        "title": "MCP Feedback Enhanced: Focus Input Field"
-      },
-      {
         "command": "mcp-feedback-enhanced.forceReset",
         "title": "MCP Feedback Enhanced: Force Reset (Restart Server)"
       },
       {
         "command": "mcp-feedback-enhanced.showStatus",
         "title": "MCP Feedback Enhanced: Show Status"
-      }
-    ],
-    "keybindings": [
-      {
-        "command": "mcp-feedback-enhanced.openPanel",
-        "key": "ctrl+shift+m",
-        "mac": "cmd+shift+m"
-      },
-      {
-        "command": "mcp-feedback-enhanced.focusInput",
-        "key": "ctrl+shift+f",
-        "mac": "cmd+shift+f"
       }
     ]
   },
