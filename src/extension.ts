@@ -158,7 +158,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
 
-    // Auto-open panels after short delay
+    context.subscriptions.push(...disposables);
+    console.log(`[MCP Feedback] Activated on port ${port}`);
+
+    // Auto-open panels after initialization settles
     setTimeout(() => {
         const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
         if (cfg.get('showInSidebar', true)) {
@@ -167,10 +170,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         if (cfg.get('showInBottomPanel', true)) {
             vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
         }
-    }, 1000);
-
-    context.subscriptions.push(...disposables);
-    console.log(`[MCP Feedback] Activated on port ${port}`);
+    }, 2000);
 }
 
 export function deactivate(): void {
