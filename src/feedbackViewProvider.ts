@@ -49,12 +49,6 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
         this._setupMessageHandler(webviewView);
         this._setupHotReload(webviewView);
 
-        webviewView.onDidChangeVisibility(() => {
-            if (webviewView.visible) {
-                webviewView.webview.html = this._getHtml();
-            }
-        });
-
         webviewView.onDidDispose(() => {
             this._view = null;
             this._stopHotReload();
@@ -117,7 +111,6 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                     break;
 
                 case 'log':
-                    console.log(`[MCP Feedback Webview] ${message.message}`);
                     break;
             }
         });

@@ -114,7 +114,7 @@ export class FeedbackWSServer {
         this._watchSessionsDir();
         this._scanExistingSessions();
 
-        console.log(`[MCP Feedback] WebSocket server started on port ${this.port}`);
+        // Server started on this.port
         return this.port;
     }
 
@@ -336,7 +336,7 @@ export class FeedbackWSServer {
     private _handleFeedbackResponse(res: FeedbackResponse): void {
         const pending = this.pendingRequests.get(res.session_id);
         if (!pending) {
-            console.warn(`[MCP Feedback] No pending request for session ${res.session_id}`);
+            // No pending request for this session_id
             return;
         }
 
@@ -588,7 +588,7 @@ export class FeedbackWSServer {
             });
         }
 
-        console.log(`[MCP Feedback] Found ${sessions.length} session(s), restored ${restoredConvs.length} conversation(s)`);
+        // Scan complete: sessions.length active, restoredConvs.length restored
     }
 
     private _onSessionRegistered(session: import('./types').SessionRegistration): void {
@@ -675,7 +675,7 @@ export class FeedbackWSServer {
             // Sort by started_at descending, pick most recent
             candidates.sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
             const resolved = candidates[0].conversation_id;
-            console.log(`[MCP Feedback] Resolved conversation_id "${providedId}" → "${resolved}"`);
+            // Resolved: providedId → resolved
             return resolved;
         }
 

@@ -127,13 +127,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(...disposables);
     // Port info available via showStatus command
 
-    setTimeout(() => {
-        vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
-    }, 2000);
+    // Retry focus to overcome other panels stealing it during startup
+    const focusCmd = 'mcp-feedback-enhanced.feedbackPanelBottom.focus';
+    for (const delay of [1500, 3000, 5000]) {
+        setTimeout(() => vscode.commands.executeCommand(focusCmd), delay);
+    }
 }
 
 export function deactivate(): void {
-    console.log('[MCP Feedback] Deactivating...');
+    // Deactivating
     for (const d of disposables) { d.dispose(); }
     disposables.length = 0;
     wsServer?.stop();
