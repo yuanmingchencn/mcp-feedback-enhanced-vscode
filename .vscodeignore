@@ -1,37 +1,13 @@
-# Ignore everything by default
 **
-
-# Include only essential files
 !package.json
-!README.md
 !LICENSE
+!README.md
+!CHANGELOG.md
 !resources/**
 !out/extension.js
 !out/webview/panel.html
-
-# MCP Server - only dist/index.js (no node_modules, dependencies are bundled)
 !mcp-server/dist/index.js
 !mcp-server/package.json
-!mcp-server/README.md
-
-# Exclude all source and dev files explicitly
-.vscode/**
-.vscode-test/**
-.cursor/**
-src/**
-docs/**
-node_modules/**
-mcp-server/node_modules/**
-mcp-server/src/**
-
-# Exclude scripts but KEEP hooks script
-scripts/**
-!scripts/hooks/check-pending.js
-
-# Exclude dev/config files
-.gitignore
-.env*
-*.vsix
-*.wav
-*.bak
-*.tsbuildinfo
+!scripts/hooks/**
+!scripts/generate-webview.js
+!scripts/validate-build.js
