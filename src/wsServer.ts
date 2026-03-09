@@ -410,10 +410,12 @@ export class FeedbackWSServer {
             return;
         }
 
+        const images = (msg.images as string[] | undefined) || [];
         writePending({
             conversation_id: conversationId,
             server_pid: process.pid,
             comments: queue,
+            images: images.length > 0 ? images : undefined,
             timestamp: Date.now(),
         });
 

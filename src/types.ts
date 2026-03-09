@@ -44,6 +44,7 @@ export interface PendingData {
     conversation_id: string;
     server_pid: number;
     comments: string[];
+    images?: string[];
     timestamp: number;
 }
 

@@ -117,6 +117,11 @@ body{
 .message .content img{max-width:200px;max-height:150px;border-radius:6px;margin:4px 0;cursor:pointer}
 .message .content img:hover{opacity:.8}
 
+/* Lightbox */
+.lightbox{display:none;position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:999;align-items:center;justify-content:center;cursor:zoom-out}
+.lightbox.visible{display:flex}
+.lightbox img{max-width:95vw;max-height:95vh;border-radius:8px;box-shadow:0 0 30px rgba(0,0,0,.5)}
+
 /* Settings */
 .settings-toggle{margin-left:auto;flex-shrink:0}
 .settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:13px;padding:0 2px}
@@ -177,6 +182,7 @@ body{
   </div>
 </div>
 <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
+<div class="lightbox" id="lightbox"><img id="lightboxImg" src=""></div>
 
 <script>
 const SERVER_URL = '{{SERVER_URL}}';
@@ -205,6 +211,16 @@ const SESSION_ID = '{{SESSION_ID}}';
     const settingsPanel = document.getElementById('settingsPanel');
     const autoReplyCheck = document.getElementById('autoReplyCheck');
     const autoReplyText = document.getElementById('autoReplyText');
+
+    const lightbox = document.getElementById('lightbox');
+    const lightboxImg = document.getElementById('lightboxImg');
+    lightbox.addEventListener('click', () => lightbox.classList.remove('visible'));
+    document.addEventListener('click', (e) => {
+        if (e.target.tagName === 'IMG' && e.target.closest('.message .content')) {
+            lightboxImg.src = e.target.src;
+            lightbox.classList.add('visible');
+        }
+    });
 
     const imagePreviews = document.getElementById('imagePreviews');
     const attachBtn = document.getElementById('attachBtn');
@@ -447,6 +463,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 type: 'queue-pending',
                 conversation_id: tab.conversationId,
                 comments: tab.pendingQueue,
+                images: tab.pendingImages || [],
             }));
         }
     }
@@ -521,9 +538,11 @@ const SESSION_ID = '{{SESSION_ID}}';
             const wrap = document.createElement('div'); wrap.className = 'img-preview';
             const img = document.createElement('img');
             img.src = 'data:image/png;base64,' + b64;
+            img.onclick = () => { lightboxImg.src = img.src; lightbox.classList.add('visible'); };
+            img.style.cursor = 'zoom-in';
             wrap.appendChild(img);
             const rm = document.createElement('button'); rm.className = 'remove'; rm.textContent = '×';
-            rm.onclick = () => removeImage(idx);
+            rm.onclick = (e) => { e.stopPropagation(); removeImage(idx); };
             wrap.appendChild(rm);
             imagePreviews.appendChild(wrap);
         });
