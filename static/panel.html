@@ -426,7 +426,9 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     sendBtn.addEventListener('click', smartSend);
     input.addEventListener('input', updateSendButton);
-    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); smartSend(); } });
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); smartSend(); }
+    });
 
     // ── Quick Replies ────────────────────────────────────
     quickReplies.addEventListener('click', (e) => {
