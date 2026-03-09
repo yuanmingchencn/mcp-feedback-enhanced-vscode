@@ -106,8 +106,8 @@ body{
 .send-btn.queue-mode:hover{border-color:var(--btn-bg)}
 
 /* Settings */
-.settings-toggle{padding:4px 10px;display:flex;justify-content:flex-end}
-.settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:11px}
+.settings-toggle{margin-left:auto;flex-shrink:0}
+.settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:13px;padding:0 2px}
 .settings-toggle button:hover{color:var(--fg)}
 .settings-panel{display:none;padding:8px 10px;border-top:1px solid var(--border)}
 .settings-panel.visible{display:block}
@@ -124,6 +124,11 @@ body{
 <div class="status-bar" id="statusBar">
   <span class="status-dot disconnected" id="statusDot"></span>
   <span id="statusText">Connecting...</span>
+  <div class="settings-toggle"><button id="settingsBtn" title="Settings">⚙</button></div>
+</div>
+<div class="settings-panel" id="settingsPanel">
+  <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
+  <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
 </div>
 
 <div class="messages" id="messages">
@@ -155,14 +160,6 @@ body{
     <textarea id="input" placeholder="Type your feedback..." rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
-</div>
-
-<div class="settings-toggle">
-  <button id="settingsBtn">⚙ Settings</button>
-</div>
-<div class="settings-panel" id="settingsPanel">
-  <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
-  <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
 </div>
 
 <script>
