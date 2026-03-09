@@ -177,6 +177,7 @@ function ensureMcpConfig(extensionPath: string): void {
             command: expectedCommand,
             args: expectedArgs,
         };
+        delete mcpServers['mcp-feedback-v2'];
         config.mcpServers = mcpServers;
 
         fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
@@ -214,9 +215,13 @@ function deployCursorHooks(extensionPath: string): void {
         const hookCommand = `node ${targetHook}`;
         const SOURCE_TAG = 'mcp-feedback-enhanced';
 
+        const LEGACY_TAGS = ['mcp-feedback-v2'];
+
         for (const event of hookPoints) {
             if (!hooks[event]) { hooks[event] = []; }
-            hooks[event] = hooks[event].filter(h => h._source !== SOURCE_TAG);
+            hooks[event] = hooks[event].filter(h =>
+                h._source !== SOURCE_TAG && !LEGACY_TAGS.includes(h._source as string)
+            );
             hooks[event].push({
                 command: hookCommand,
                 _source: SOURCE_TAG,
