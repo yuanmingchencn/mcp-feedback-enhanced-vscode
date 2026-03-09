@@ -288,24 +288,23 @@ function main() {
 
     if (hook === 'beforeMCPExecution') {
         const mcpTool = input.tool_name || '';
-        const pending = getPending(conversationId, workspaceRoots);
 
+        // Allowlisted tools (like interactive_feedback) pass through cleanly.
+        // Pending is delivered via the webview auto-send flow, not here.
+        if (isAllowlisted(mcpTool)) {
+            output({});
+            return;
+        }
+
+        const pending = getPending(conversationId, workspaceRoots);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            if (isAllowlisted(mcpTool)) {
-                consumePending(conversationId);
-                output({
-                    permission: 'allow',
-                    agent_message: fmtAgent(combined),
-                });
-            } else {
-                consumePending(conversationId);
-                output({
-                    permission: 'deny',
-                    user_message: fmtUser(combined),
-                    agent_message: fmtAgent(combined),
-                });
-            }
+            consumePending(conversationId);
+            output({
+                permission: 'deny',
+                user_message: fmtUser(combined),
+                agent_message: fmtAgent(combined),
+            });
             return;
         }
         output({});
