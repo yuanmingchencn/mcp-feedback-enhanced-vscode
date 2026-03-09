@@ -175,7 +175,6 @@ body{
 <div class="image-previews" id="imagePreviews"></div>
 <div class="input-area">
   <div class="input-row">
-    <button class="attach-btn" id="pasteImgBtn" title="Paste image from clipboard">📋</button>
     <button class="attach-btn" id="attachBtn" title="Attach image file">📎</button>
     <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
@@ -627,9 +626,6 @@ const SESSION_ID = '{{SESSION_ID}}';
             console.warn('Clipboard read failed:', err);
         }
     }
-
-    // Paste from clipboard button
-    document.getElementById('pasteImgBtn').addEventListener('click', pasteFromClipboard);
 
     // File picker
     attachBtn.addEventListener('click', () => fileInput.click());
