@@ -581,9 +581,7 @@ export class FeedbackWSServer {
         // Create or update conversation data
         let conv = readConversation(session.conversation_id);
         if (!conv) {
-            const modelShort = session.model
-                ? session.model.replace(/-high-thinking$/, '').replace(/-\d{8}$/, '')
-                : 'Agent';
+            const idPrefix = session.conversation_id.slice(0, 8);
             const time = new Date(session.started_at).toLocaleTimeString('en-US', {
                 hour: '2-digit', minute: '2-digit', hour12: false,
             });
@@ -593,7 +591,7 @@ export class FeedbackWSServer {
                 workspace_roots: session.workspace_roots,
                 started_at: session.started_at,
                 ended_at: null,
-                label: `${modelShort} | ${time}`,
+                label: `${idPrefix} | ${time}`,
                 state: 'idle',
                 messages: [],
                 pending_queue: [],
