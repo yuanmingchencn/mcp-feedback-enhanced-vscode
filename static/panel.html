@@ -228,6 +228,7 @@ const SESSION_ID = '{{SESSION_ID}}';
             this.autoReply = false;
             this.autoReplyText = 'Continue';
             this.inputDraft = '';
+            this.pendingImages = [];
         }
     }
 
@@ -421,11 +422,19 @@ const SESSION_ID = '{{SESSION_ID}}';
     }
 
     function addToPending(text) {
-        if (!text || !text.trim()) return;
+        const hasText = text && text.trim();
+        const hasImages = pendingImages.length > 0;
+        if (!hasText && !hasImages) return;
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab) return;
-        tab.pendingQueue.push(text.trim());
+        if (hasText) tab.pendingQueue.push(text.trim());
+        if (hasImages) {
+            if (!tab.pendingImages) tab.pendingImages = [];
+            tab.pendingImages.push(...pendingImages);
+            clearImages();
+        }
         syncPending();
+        tab.inputDraft = '';
         input.value = '';
     }
 
@@ -460,7 +469,8 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     function smartSend() {
         const text = input.value.trim();
-        if (!text) return;
+        const hasContent = text || pendingImages.length > 0;
+        if (!hasContent) return;
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab) return;
         if (tab.state === 'waiting' && tab.pendingSessionId) submitFeedback(text);
@@ -702,15 +712,19 @@ const SESSION_ID = '{{SESSION_ID}}';
 
                 switchTab(id);
                 if (vscode) vscode.postMessage({ type: 'new-session' });
-                if (tab.pendingQueue.length > 0) {
+                if (tab.pendingQueue.length > 0 || (tab.pendingImages && tab.pendingImages.length > 0)) {
                     const combined = tab.pendingQueue.join('\n\n');
+                    // Restore queued images before sending
+                    if (tab.pendingImages && tab.pendingImages.length > 0) {
+                        pendingImages = tab.pendingImages;
+                        tab.pendingImages = [];
+                    }
                     tab.pendingQueue = [];
                     renderPending();
-                    // Clear the pending file on disk so hooks don't double-consume
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify({ type: 'queue-pending', conversation_id: id, comments: [] }));
                     }
-                    submitFeedback(combined);
+                    submitFeedback(combined || '(image)');
                     return;
                 }
                 if (tab.autoReply && tab.autoReplyText) {
