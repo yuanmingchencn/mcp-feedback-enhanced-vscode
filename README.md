@@ -20,20 +20,20 @@
 Install **MCP Feedback Enhanced** from the VS Code Marketplace or build from source.
 
 ### 2. Verify MCP Configuration
-The extension auto-configures `~/.cursor/mcp.json`:
+The extension auto-configures `~/.cursor/mcp.json` to use the bundled MCP server:
 
 ```json
 {
   "mcpServers": {
     "mcp-feedback-enhanced": {
-      "command": "npx",
-      "args": ["-y", "mcp-feedback-enhanced@latest"],
-      "timeout": 86400,
-      "autoApprove": ["interactive_feedback"]
+      "command": "node",
+      "args": ["<extension-path>/mcp-server/dist/index.js"]
     }
   }
 }
 ```
+
+The `<extension-path>` is automatically resolved to the installed extension directory. No separate npm installation is needed.
 
 ### 3. Verify Cursor Hooks
 The extension auto-deploys `~/.cursor/hooks.json` with entries for all 6 hook points. This enables real-time pending message injection.
