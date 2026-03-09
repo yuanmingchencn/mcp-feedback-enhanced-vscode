@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MCP Feedback V2</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:var(--vscode-editor-background,#1e1e1e);
+  --fg:var(--vscode-foreground,#ccc);
+  --fg-dim:var(--vscode-descriptionForeground,#888);
+  --border:var(--vscode-input-border,#3c3c3c);
+  --input-bg:var(--vscode-input-background,#2d2d2d);
+  --btn-bg:var(--vscode-button-background,#0078d4);
+  --btn-fg:var(--vscode-button-foreground,#fff);
+  --btn-hover:var(--vscode-button-hoverBackground,#106ebe);
+  --accent:var(--vscode-terminal-ansiYellow,#dcdcaa);
+  --tab-active:var(--vscode-tab-activeBackground,#1e1e1e);
+  --tab-inactive:var(--vscode-tab-inactiveBackground,#2d2d2d);
+  --waiting-dot:#e8a839;
+  --success:var(--vscode-terminal-ansiGreen,#4ec9b0);
+}
+html,body{height:100%;overflow:hidden}
+body{
+  background:var(--bg);color:var(--fg);
+  font-family:var(--vscode-font-family,system-ui,-apple-system,sans-serif);
+  font-size:13px;display:flex;flex-direction:column;height:100vh;
+}
+
+/* Tab Bar */
+.tab-bar{
+  display:flex;align-items:center;height:32px;min-height:32px;
+  background:var(--tab-inactive);border-bottom:1px solid var(--border);
+  overflow-x:auto;scrollbar-width:none;
+}
+.tab-bar::-webkit-scrollbar{display:none}
+.tab{
+  display:flex;align-items:center;gap:4px;padding:0 12px;height:100%;
+  cursor:pointer;white-space:nowrap;font-size:12px;color:var(--fg-dim);
+  border-right:1px solid var(--border);flex-shrink:0;
+}
+.tab:hover{background:var(--tab-active)}
+.tab.active{background:var(--tab-active);color:var(--fg);border-bottom:2px solid var(--btn-bg)}
+.tab.ended{opacity:.5;font-style:italic}
+.tab .dot{width:6px;height:6px;border-radius:50%;display:inline-block;flex-shrink:0}
+.tab .dot.waiting{background:var(--waiting-dot);animation:pulse 1.5s infinite}
+.tab .dot.running{background:var(--success);animation:pulse 2s infinite}
+.tab .dot.idle{background:var(--fg-dim)}
+.tab .close-btn{display:none;margin-left:4px;opacity:.5;cursor:pointer;font-size:14px}
+.tab:hover .close-btn{display:inline}
+.tab .close-btn:hover{opacity:1}
+.tab-overflow{padding:0 8px;cursor:pointer;color:var(--fg-dim);font-size:14px;flex-shrink:0}
+.tab-overflow:hover{color:var(--fg)}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+
+/* Status Bar */
+.status-bar{display:flex;align-items:center;gap:6px;padding:4px 10px;font-size:11px;color:var(--fg-dim);border-bottom:1px solid var(--border)}
+.status-dot{width:8px;height:8px;border-radius:50%}
+.status-dot.connected{background:var(--success)}
+.status-dot.connecting{background:var(--waiting-dot);animation:pulse 1s infinite}
+.status-dot.disconnected{background:#e74c3c}
+
+/* Messages */
+.messages{flex:1;overflow-y:auto;padding:8px 10px}
+.message{margin-bottom:10px;padding:10px 12px;border-radius:8px;line-height:1.5}
+.message.ai{background:color-mix(in srgb,var(--btn-bg) 12%,var(--bg))}
+.message.user{background:color-mix(in srgb,var(--success) 10%,var(--bg))}
+.message.system{background:transparent;text-align:center;font-size:11px;color:var(--fg-dim);padding:4px}
+.message .header{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-dim);margin-bottom:6px}
+.message .header .role{font-weight:600;color:var(--fg)}
+.message .content{word-break:break-word}
+.message .content code{background:var(--input-bg);padding:1px 4px;border-radius:3px;font-size:12px}
+.message .content pre{background:var(--input-bg);padding:8px;border-radius:4px;overflow-x:auto;margin:6px 0}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--fg-dim);text-align:center;padding:20px;gap:8px}
+.empty-state .icon{font-size:32px}
+
+/* Pending */
+.pending-section{margin:0 10px 6px;padding:8px 10px;background:color-mix(in srgb,var(--accent) 10%,var(--bg));border:1px solid var(--accent);border-radius:6px;display:none}
+.pending-section.visible{display:block}
+.pending-header{display:flex;justify-content:space-between;align-items:center;font-size:11px;color:var(--fg-dim);margin-bottom:4px}
+.pending-item{display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:12px}
+.pending-item .text{flex:1;word-break:break-word}
+.pending-item button{background:transparent;border:1px solid var(--border);color:var(--fg);border-radius:3px;padding:2px 6px;cursor:pointer;font-size:11px;opacity:.6}
+.pending-item button:hover{opacity:1}
+
+/* Quick Replies */
+.quick-replies{display:flex;gap:4px;padding:4px 10px;flex-wrap:wrap}
+.quick-reply-btn{background:var(--input-bg);border:1px solid var(--border);color:var(--fg);border-radius:4px;padding:3px 10px;cursor:pointer;font-size:11px}
+.quick-reply-btn:hover{border-color:var(--btn-bg)}
+
+/* Input */
+.input-area{padding:6px 10px 8px;border-top:1px solid var(--border)}
+.input-row{display:flex;gap:6px;align-items:flex-end}
+.input-row textarea{flex:1;min-height:36px;max-height:120px;resize:vertical;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.4}
+.input-row textarea:focus{outline:none;border-color:var(--btn-bg)}
+.input-row textarea::placeholder{color:var(--fg-dim)}
+.send-btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap}
+.send-btn:hover{background:var(--btn-hover)}
+.send-btn:disabled{opacity:.4;cursor:not-allowed}
+.send-btn.queue-mode{background:var(--input-bg);color:var(--fg);border:1px solid var(--border)}
+.send-btn.queue-mode:hover{border-color:var(--btn-bg)}
+
+/* Settings */
+.settings-toggle{padding:4px 10px;display:flex;justify-content:flex-end}
+.settings-toggle button{background:transparent;border:none;color:var(--fg-dim);cursor:pointer;font-size:11px}
+.settings-toggle button:hover{color:var(--fg)}
+.settings-panel{display:none;padding:8px 10px;border-top:1px solid var(--border)}
+.settings-panel.visible{display:block}
+.settings-panel label{display:flex;align-items:center;gap:6px;font-size:12px;margin-bottom:6px;cursor:pointer}
+.settings-panel input[type="text"]{width:100%;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:4px;padding:4px 8px;font-size:12px;margin-top:4px}
+</style>
+</head>
+<body>
+
+<div class="tab-bar" id="tabBar">
+  <div class="tab-overflow" id="tabOverflow" title="All conversations">...</div>
+</div>
+
+<div class="status-bar" id="statusBar">
+  <span class="status-dot disconnected" id="statusDot"></span>
+  <span id="statusText">Connecting...</span>
+</div>
+
+<div class="messages" id="messages">
+  <div class="empty-state" id="emptyState">
+    <div class="icon">💬</div>
+    <div>Waiting for agent...</div>
+    <div style="font-size:11px">Agent will appear here when it calls interactive_feedback.</div>
+    <div style="font-size:11px">You can queue a pending message below.</div>
+  </div>
+</div>
+
+<div class="pending-section" id="pendingSection">
+  <div class="pending-header">
+    <span>Pending (<span id="pendingCount">0</span>)</span>
+    <button id="clearPendingBtn" title="Clear all">✕</button>
+  </div>
+  <div id="pendingList"></div>
+</div>
+
+<div class="quick-replies" id="quickReplies">
+  <button class="quick-reply-btn" data-text="Continue">Continue</button>
+  <button class="quick-reply-btn" data-text="Looks good">Good</button>
+  <button class="quick-reply-btn" data-text="Please fix the issues">Fix</button>
+  <button class="quick-reply-btn" data-text="Stop, I want to review first">Stop</button>
+</div>
+
+<div class="input-area">
+  <div class="input-row">
+    <textarea id="input" placeholder="Type your feedback..." rows="1"></textarea>
+    <button class="send-btn" id="sendBtn" disabled>Send</button>
+  </div>
+</div>
+
+<div class="settings-toggle">
+  <button id="settingsBtn">⚙ Settings</button>
+</div>
+<div class="settings-panel" id="settingsPanel">
+  <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
+  <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
+</div>
+
+<script>
+const SERVER_URL = '{{SERVER_URL}}';
+const PROJECT_PATH = '{{PROJECT_PATH}}';
+const SESSION_ID = '{{SESSION_ID}}';
+
+(function () {
+    'use strict';
+
+    const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
+
+    const tabBar = document.getElementById('tabBar');
+    const tabOverflow = document.getElementById('tabOverflow');
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
+    const messagesEl = document.getElementById('messages');
+    const emptyState = document.getElementById('emptyState');
+    const pendingSection = document.getElementById('pendingSection');
+    const pendingCount = document.getElementById('pendingCount');
+    const pendingList = document.getElementById('pendingList');
+    const clearPendingBtn = document.getElementById('clearPendingBtn');
+    const quickReplies = document.getElementById('quickReplies');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('sendBtn');
+    const settingsBtn = document.getElementById('settingsBtn');
+    const settingsPanel = document.getElementById('settingsPanel');
+    const autoReplyCheck = document.getElementById('autoReplyCheck');
+    const autoReplyText = document.getElementById('autoReplyText');
+
+    let ws = null;
+    let reconnectAttempts = 0;
+    let activeTabId = null;
+    const tabs = new Map();
+
+    class TabState {
+        constructor(id, label, model, state) {
+            this.conversationId = id;
+            this.label = label || 'Agent';
+            this.model = model || '';
+            this.state = state || 'idle';
+            this.messages = [];
+            this.pendingQueue = [];
+            this.pendingSessionId = null;
+            this.autoReply = false;
+            this.autoReplyText = 'Continue';
+        }
+    }
+
+    // ── Persistence ──────────────────────────────────────
+    const STORAGE_KEY = 'mcp-fb-v2-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+
+    function saveState() {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify({
+                activeTabId,
+                tabs: Array.from(tabs.entries()).map(([id, t]) => ({
+                    id, label: t.label, model: t.model, state: t.state,
+                    messages: t.messages.slice(-100),
+                    pendingQueue: t.pendingQueue,
+                    autoReply: t.autoReply, autoReplyText: t.autoReplyText,
+                })),
+            }));
+        } catch {}
+    }
+
+    function loadState() {
+        try {
+            const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
+            if (!d) return;
+            for (const t of (d.tabs || [])) {
+                const tab = new TabState(t.id, t.label, t.model, t.state);
+                tab.messages = t.messages || [];
+                tab.pendingQueue = t.pendingQueue || [];
+                tab.autoReply = t.autoReply || false;
+                tab.autoReplyText = t.autoReplyText || 'Continue';
+                tabs.set(t.id, tab);
+            }
+            if (d.activeTabId && tabs.has(d.activeTabId)) activeTabId = d.activeTabId;
+        } catch {}
+    }
+
+    // ── Tab Bar ──────────────────────────────────────────
+    function renderTabBar() {
+        tabBar.querySelectorAll('.tab').forEach(el => el.remove());
+        for (const [id, tab] of tabs) {
+            const el = document.createElement('div');
+            el.className = 'tab' + (id === activeTabId ? ' active' : '') + (tab.state === 'ended' ? ' ended' : '');
+
+            const dot = document.createElement('span');
+            dot.className = 'dot ' + tab.state;
+            el.appendChild(dot);
+
+            const lbl = document.createElement('span');
+            lbl.textContent = tab.label;
+            el.appendChild(lbl);
+
+            const close = document.createElement('span');
+            close.className = 'close-btn';
+            close.textContent = '×';
+            close.onclick = (e) => { e.stopPropagation(); closeTab(id); };
+            el.appendChild(close);
+
+            el.onclick = () => switchTab(id);
+            tabBar.insertBefore(el, tabOverflow);
+        }
+    }
+
+    function switchTab(id) {
+        if (!tabs.has(id)) return;
+        activeTabId = id;
+        renderTabBar(); renderMessages(); renderPending(); updateSendButton();
+        saveState();
+    }
+
+    function closeTab(id) {
+        tabs.delete(id);
+        if (activeTabId === id) {
+            const keys = Array.from(tabs.keys());
+            activeTabId = keys.length > 0 ? keys[keys.length - 1] : null;
+        }
+        renderTabBar(); renderMessages(); renderPending(); updateSendButton();
+        saveState();
+    }
+
+    function getOrCreateTab(id, label, model, state) {
+        if (tabs.has(id)) return tabs.get(id);
+        const tab = new TabState(id, label, model, state);
+        tabs.set(id, tab);
+        renderTabBar();
+        return tab;
+    }
+
+    // ── Messages ─────────────────────────────────────────
+    function renderMessages() {
+        messagesEl.innerHTML = '';
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab || tab.messages.length === 0) { emptyState.style.display = 'flex'; return; }
+        emptyState.style.display = 'none';
+
+        for (const msg of tab.messages) {
+            const el = document.createElement('div');
+            el.className = 'message ' + msg.role;
+            if (msg.role === 'system') {
+                el.innerHTML = md(msg.content);
+            } else {
+                const h = document.createElement('div'); h.className = 'header';
+                const r = document.createElement('span'); r.className = 'role';
+                r.textContent = msg.role === 'ai' ? '🤖 AI' : '👤 You';
+                h.appendChild(r);
+                if (msg.timestamp) {
+                    const t = document.createElement('span');
+                    t.textContent = new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+                    h.appendChild(t);
+                }
+                el.appendChild(h);
+                const c = document.createElement('div'); c.className = 'content';
+                c.innerHTML = md(msg.content);
+                el.appendChild(c);
+            }
+            messagesEl.appendChild(el);
+        }
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+
+    function md(text) {
+        if (!text) return '';
+        return text
+            .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+            .replace(/```([\s\S]*?)```/g,'<pre><code>$1</code></pre>')
+            .replace(/`([^`]+)`/g,'<code>$1</code>')
+            .replace(/\*\*(.+?)\*\*/g,'<strong>$1</strong>')
+            .replace(/\*(.+?)\*/g,'<em>$1</em>')
+            .replace(/^### (.+)$/gm,'<h4>$1</h4>')
+            .replace(/^## (.+)$/gm,'<h3>$1</h3>')
+            .replace(/^# (.+)$/gm,'<h2>$1</h2>')
+            .replace(/^- (.+)$/gm,'• $1<br>')
+            .replace(/\n/g,'<br>');
+    }
+
+    // ── Pending Queue ────────────────────────────────────
+    function renderPending() {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        const q = tab ? tab.pendingQueue : [];
+        if (q.length === 0) { pendingSection.classList.remove('visible'); return; }
+        pendingSection.classList.add('visible');
+        pendingCount.textContent = q.length;
+        pendingList.innerHTML = '';
+        q.forEach((text, idx) => {
+            const item = document.createElement('div'); item.className = 'pending-item';
+            const span = document.createElement('span'); span.className = 'text'; span.textContent = text;
+            item.appendChild(span);
+            const editBtn = document.createElement('button'); editBtn.textContent = '✎'; editBtn.title = 'Edit';
+            editBtn.onclick = () => { input.value = text; q.splice(idx,1); syncPending(); input.focus(); };
+            item.appendChild(editBtn);
+            const delBtn = document.createElement('button'); delBtn.textContent = '✕'; delBtn.title = 'Remove';
+            delBtn.onclick = () => { q.splice(idx,1); syncPending(); };
+            item.appendChild(delBtn);
+            pendingList.appendChild(item);
+        });
+    }
+
+    function addToPending(text) {
+        if (!text || !text.trim()) return;
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab) return;
+        tab.pendingQueue.push(text.trim());
+        syncPending();
+        input.value = '';
+    }
+
+    function syncPending() {
+        renderPending(); updateSendButton(); saveState();
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'queue-pending',
+                conversation_id: tab.conversationId,
+                comments: tab.pendingQueue,
+            }));
+        }
+    }
+
+    clearPendingBtn.addEventListener('click', () => {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (tab && confirm('Clear all pending?')) { tab.pendingQueue = []; syncPending(); }
+    });
+
+    // ── Smart Send ───────────────────────────────────────
+    function updateSendButton() {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        const hasText = input.value.trim().length > 0;
+        const isWaiting = tab && tab.state === 'waiting' && tab.pendingSessionId;
+        const isEnded = tab && tab.state === 'ended';
+        if (isEnded) { sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn'; }
+        else if (isWaiting) { sendBtn.disabled = !hasText; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn'; }
+        else { sendBtn.disabled = !hasText; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode'; }
+    }
+
+    function smartSend() {
+        const text = input.value.trim();
+        if (!text) return;
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab) return;
+        if (tab.state === 'waiting' && tab.pendingSessionId) submitFeedback(text);
+        else addToPending(text);
+    }
+
+    function submitFeedback(text) {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab || !tab.pendingSessionId) return;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({
+                type: 'feedback_response', session_id: tab.pendingSessionId,
+                conversation_id: tab.conversationId, feedback: text, images: [],
+            }));
+            tab.messages.push({ role: 'user', content: text, timestamp: new Date().toISOString() });
+            tab.pendingSessionId = null; tab.state = 'running';
+            input.value = '';
+            renderMessages(); renderTabBar(); updateSendButton(); saveState();
+            if (vscode) vscode.postMessage({ type: 'feedback-submitted' });
+        }
+    }
+
+    sendBtn.addEventListener('click', smartSend);
+    input.addEventListener('input', updateSendButton);
+    input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); smartSend(); } });
+
+    // ── Quick Replies ────────────────────────────────────
+    quickReplies.addEventListener('click', (e) => {
+        const btn = e.target.closest('.quick-reply-btn');
+        if (!btn) return;
+        const text = btn.dataset.text;
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (!tab || !text) return;
+        if (tab.state === 'waiting' && tab.pendingSessionId) submitFeedback(text);
+        else addToPending(text);
+    });
+
+    // ── Settings ─────────────────────────────────────────
+    settingsBtn.addEventListener('click', () => settingsPanel.classList.toggle('visible'));
+    autoReplyCheck.addEventListener('change', () => {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (tab) { tab.autoReply = autoReplyCheck.checked; saveState(); }
+    });
+    autoReplyText.addEventListener('input', () => {
+        const tab = activeTabId ? tabs.get(activeTabId) : null;
+        if (tab) { tab.autoReplyText = autoReplyText.value; saveState(); }
+    });
+
+    // ── WebSocket ────────────────────────────────────────
+    function connect() {
+        if (ws && ws.readyState === WebSocket.OPEN) return;
+        updateStatus('connecting', 'Connecting...');
+        try {
+            ws = new WebSocket(SERVER_URL);
+            ws.onopen = () => {
+                reconnectAttempts = 0;
+                updateStatus('connected', 'Connected :' + (SERVER_URL.match(/:(\d+)/)?.[1] || '?'));
+                ws.send(JSON.stringify({ type: 'register', clientType: 'webview', projectPath: PROJECT_PATH }));
+                ws.send(JSON.stringify({ type: 'get_conversations' }));
+            };
+            ws.onmessage = (e) => { try { handleMsg(JSON.parse(e.data)); } catch {} };
+            ws.onclose = () => { updateStatus('disconnected', 'Disconnected'); scheduleReconnect(); };
+            ws.onerror = () => { updateStatus('disconnected', 'Connection error'); };
+        } catch { updateStatus('disconnected', 'Failed'); scheduleReconnect(); }
+    }
+
+    function scheduleReconnect() {
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts), 30000);
+        reconnectAttempts++;
+        setTimeout(connect, delay);
+    }
+
+    function updateStatus(state, text) {
+        statusDot.className = 'status-dot ' + state;
+        statusText.textContent = text;
+    }
+
+    // ── Message Handling ─────────────────────────────────
+    function handleMsg(msg) {
+        switch (msg.type) {
+            case 'connection_established': break;
+
+            case 'session_registered': {
+                const s = msg.session || {}, conv = msg.conversation || {};
+                const id = s.conversation_id || conv.conversation_id;
+                if (!id) break;
+                const tab = getOrCreateTab(id, conv.label, conv.model || s.model, conv.state || 'idle');
+                if (conv.messages) tab.messages = conv.messages;
+                if (!activeTabId) switchTab(id); else renderTabBar();
+                break;
+            }
+
+            case 'session_ended': {
+                const tab = tabs.get(msg.conversation_id);
+                if (tab) {
+                    tab.state = 'ended';
+                    tab.messages.push({ role: 'system', content: '── Session ended ──', timestamp: new Date().toISOString() });
+                    renderTabBar();
+                    if (msg.conversation_id === activeTabId) { renderMessages(); updateSendButton(); }
+                    saveState();
+                }
+                break;
+            }
+
+            case 'session_updated': {
+                const info = msg.session_info || {};
+                const id = info.conversation_id || '';
+                const tab = getOrCreateTab(id, null, null, 'waiting');
+                tab.state = 'waiting';
+                tab.pendingSessionId = info.session_id;
+                tab.messages.push({ role: 'ai', content: info.summary || '', timestamp: new Date().toISOString() });
+                switchTab(id);
+                if (vscode) vscode.postMessage({ type: 'new-session' });
+                if (tab.pendingQueue.length > 0) {
+                    const combined = tab.pendingQueue.join('\n\n');
+                    tab.pendingQueue = [];
+                    submitFeedback(combined);
+                    return;
+                }
+                if (tab.autoReply && tab.autoReplyText) {
+                    setTimeout(() => {
+                        if (tab.state === 'waiting' && tab.pendingSessionId === info.session_id) {
+                            submitFeedback(tab.autoReplyText);
+                            tab.messages.push({ role: 'system', content: 'Auto-replied: ' + tab.autoReplyText, timestamp: new Date().toISOString() });
+                        }
+                    }, 500);
+                }
+                break;
+            }
+
+            case 'feedback_submitted': {
+                const tab = tabs.get(msg.conversation_id);
+                if (tab && tab.pendingSessionId === msg.session_id) {
+                    tab.pendingSessionId = null; tab.state = 'running';
+                    renderTabBar(); updateSendButton(); saveState();
+                }
+                break;
+            }
+
+            case 'pending-consumed': {
+                const tab = tabs.get(msg.conversation_id);
+                if (tab && tab.pendingQueue.length > 0) {
+                    tab.messages.push({ role: 'system', content: '⚡ Pending delivered', timestamp: new Date().toISOString() });
+                    tab.pendingQueue = [];
+                    if (msg.conversation_id === activeTabId) { renderMessages(); renderPending(); }
+                    saveState();
+                }
+                break;
+            }
+
+            case 'conversations_list':
+                for (const c of (msg.conversations || [])) getOrCreateTab(c.conversation_id, c.label, c.model, c.state);
+                if (!activeTabId && tabs.size > 0) switchTab(Array.from(tabs.keys())[tabs.size - 1]);
+                renderTabBar();
+                break;
+
+            case 'conversation_loaded': {
+                const conv = msg.conversation;
+                if (!conv) break;
+                const tab = getOrCreateTab(conv.conversation_id, conv.label, conv.model, conv.state);
+                tab.messages = conv.messages || [];
+                tab.pendingQueue = conv.pending_queue || [];
+                if (conv.conversation_id === activeTabId) { renderMessages(); renderPending(); }
+                saveState();
+                break;
+            }
+
+            case 'pong': case 'status_update': break;
+        }
+    }
+
+    // ── Extension Messages ───────────────────────────────
+    window.addEventListener('message', (event) => {
+        const msg = event.data;
+        if (msg.type === 'reconnect') { if (ws) { try { ws.close(); } catch {} } ws = null; reconnectAttempts = 0; connect(); }
+        else if (msg.type === 'focus-input') input.focus();
+    });
+
+    // ── Heartbeat ────────────────────────────────────────
+    setInterval(() => { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'ping' })); }, 30000);
+
+    // ── Init ─────────────────────────────────────────────
+    loadState(); renderTabBar(); renderMessages(); renderPending(); updateSendButton(); connect();
+})();
+</script>
+</body>
+</html>

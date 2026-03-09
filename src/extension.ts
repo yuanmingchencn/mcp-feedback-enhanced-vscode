@@ -1,455 +1,269 @@
 /**
- * MCP Feedback Enhanced - VSCode Extension
- * 
- * Extension acts as WebSocket Server, both Webview and MCP Server connect to it.
+ * Extension entry point.
+ *
+ * Responsibilities:
+ * - Start WebSocket server
+ * - Register sidebar, bottom, and editor webview providers
+ * - Deploy Cursor hooks
+ * - Auto-configure MCP server in Cursor's mcp.json
+ * - Register commands
  */
 
 import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { FeedbackWSServer } from './wsServer';
 import { FeedbackViewProvider } from './feedbackViewProvider';
-import { FeedbackWebSocketServer } from './wsServer';
 
-/**
- * Load webview HTML from file (same logic as feedbackViewProvider)
- */
-function loadWebviewHtml(extensionPath: string, serverUrl: string, workspacePath: string, sessionId: string): string {
-    const htmlPath = path.join(extensionPath, 'out', 'webview', 'panel.html');
+let wsServer: FeedbackWSServer;
+let sidebarProvider: FeedbackViewProvider;
+let bottomProvider: FeedbackViewProvider;
+const disposables: vscode.Disposable[] = [];
 
-    try {
-        let html = fs.readFileSync(htmlPath, 'utf-8');
-        html = html.replace(/\{\{SERVER_URL\}\}/g, serverUrl);
-        html = html.replace(/\{\{PROJECT_PATH\}\}/g, workspacePath);
-        html = html.replace(/\{\{SESSION_ID\}\}/g, sessionId);
-        return html;
-    } catch (e) {
-        console.error('[MCP Feedback] Failed to load HTML:', e);
-        return `<!DOCTYPE html><html><body><h1>Error loading webview</h1><p>${e}</p><p>Run: npm run compile</p></body></html>`;
-    }
+function getWorkspaces(): string[] {
+    return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
 }
 
-let feedbackViewProvider: FeedbackViewProvider | undefined;
-let feedbackBottomProvider: FeedbackViewProvider | undefined;
-let editorPanel: vscode.WebviewPanel | undefined;
-let wsServer: FeedbackWebSocketServer | undefined;
+function getCursorTraceId(): string {
+    return process.env.CURSOR_TRACE_ID || '';
+}
 
-export async function activate(context: vscode.ExtensionContext) {
-    console.log('MCP Feedback Enhanced extension activating...');
+function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
+    // Try static/panel.html first (source), then out/webview/panel.html (build artifact)
+    const candidates = [
+        path.join(extensionPath, 'static', 'panel.html'),
+        path.join(extensionPath, 'out', 'webview', 'panel.html'),
+    ];
+    let html = '';
+    for (const p of candidates) {
+        if (fs.existsSync(p)) { html = fs.readFileSync(p, 'utf-8'); break; }
+    }
+    if (!html) {
+        return '<html><body><h3>Webview not found. Check static/panel.html.</h3></body></html>';
+    }
+    html = html.replace(/\{\{SERVER_URL\}\}/g, `ws://127.0.0.1:${serverPort}`);
+    html = html.replace(/\{\{PROJECT_PATH\}\}/g, getWorkspaces()[0] || '');
+    html = html.replace(/\{\{SESSION_ID\}\}/g, `ext_${Date.now()}`);
+    return html;
+}
 
-    // Start WebSocket Server first
-    wsServer = new FeedbackWebSocketServer((status) => {
-        console.log(`[MCP Feedback] WS Server status: ${status}`);
-    });
+export async function activate(context: vscode.ExtensionContext): Promise<void> {
+    console.log('[MCP Feedback] Activating extension...');
 
-    // Listen for feedback requests from WebSocket server to auto-focus panel
-    // Register this BEFORE starting the server to ensure we don't miss any startup requests
-    wsServer.onFeedbackRequest(() => {
-        vscode.commands.executeCommand('workbench.view.extension.mcp-feedback');
-        feedbackViewProvider?.focusInput();
-    });
+    // Start WebSocket server
+    wsServer = new FeedbackWSServer();
+    wsServer.setWorkspaces(getWorkspaces());
+    wsServer.setCursorTraceId(getCursorTraceId());
 
-    let serverPort: number;
+    let port: number;
     try {
-        serverPort = await wsServer.start();
-        console.log(`[MCP Feedback] WebSocket Server started on port ${serverPort}`);
-
-        // Set workspace paths for MCP Server matching
-        const workspaces = vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [];
-        wsServer.setWorkspaces(workspaces);
-
-        // Update workspaces when folders change
-        context.subscriptions.push(
-            vscode.workspace.onDidChangeWorkspaceFolders(() => {
-                const newWorkspaces = vscode.workspace.workspaceFolders?.map(f => f.uri.fsPath) || [];
-                wsServer?.setWorkspaces(newWorkspaces);
-            })
-        );
+        port = await wsServer.start();
     } catch (e) {
-        console.error(`[MCP Feedback] Failed to start WebSocket Server: ${e}`);
         vscode.window.showErrorMessage(`MCP Feedback: Failed to start server - ${e}`);
-        return; // Cannot continue without server
+        return;
     }
 
-    // Create and register the feedback view provider (sidebar)
-    // Pass the server port so webview knows where to connect
-    feedbackViewProvider = new FeedbackViewProvider(context.extensionUri, context, undefined, serverPort);
-
-    // Set up force reset callback
-    feedbackViewProvider.onForceReset(async () => {
-        if (wsServer) {
-            const newPort = await wsServer.restart();
-            // Update all providers with new port
-            feedbackViewProvider?.updateServerPort(newPort);
-            feedbackBottomProvider?.updateServerPort(newPort);
-            return newPort;
-        }
+    // Focus panel when agent requests feedback
+    wsServer.onFeedbackRequest(() => {
+        vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
     });
 
-    // Wire up pending updates to WebSocket server
-    feedbackViewProvider.onPendingUpdate((value) => {
-        if (wsServer) {
-            const workspacePath = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-            if (workspacePath) {
-                wsServer.updatePendingComment(workspacePath, value);
-            }
-        }
-    });
+    // Create providers
+    const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
 
-    context.subscriptions.push(
+    sidebarProvider = new FeedbackViewProvider(getHtml, 'sidebar');
+    bottomProvider = new FeedbackViewProvider(getHtml, 'bottom');
+
+    // Register force reset callback
+    const forceResetCallback = async (): Promise<number> => {
+        await wsServer.stop();
+        wsServer.setWorkspaces(getWorkspaces());
+        wsServer.setCursorTraceId(getCursorTraceId());
+        const newPort = await wsServer.start();
+        port = newPort;
+        sidebarProvider.updateHtmlGetter(() => _loadWebviewHtml(context.extensionPath, newPort));
+        bottomProvider.updateHtmlGetter(() => _loadWebviewHtml(context.extensionPath, newPort));
+        sidebarProvider.recreate();
+        bottomProvider.recreate();
+        return newPort;
+    };
+    sidebarProvider.onForceReset(forceResetCallback);
+    bottomProvider.onForceReset(forceResetCallback);
+
+    // Register view providers
+    disposables.push(
         vscode.window.registerWebviewViewProvider(
-            FeedbackViewProvider.viewType,
-            feedbackViewProvider,
-            {
-                webviewOptions: {
-                    retainContextWhenHidden: false  // Force reload to get fresh HTML with replaced placeholders
-                }
-            }
-        )
-    );
-
-    // Register bottom panel provider
-    feedbackBottomProvider = new FeedbackViewProvider(context.extensionUri, context, 'mcp-feedback.feedbackPanelBottom', serverPort);
-
-    // Set up force reset callback for bottom panel too
-    feedbackBottomProvider.onForceReset(async () => {
-        if (wsServer) {
-            const newPort = await wsServer.restart();
-            feedbackViewProvider?.updateServerPort(newPort);
-            feedbackBottomProvider?.updateServerPort(newPort);
-            return newPort;
-        }
-    });
-
-    context.subscriptions.push(
+            'mcp-feedback-v2.feedbackPanel',
+            sidebarProvider,
+            { webviewOptions: { retainContextWhenHidden: false } }
+        ),
         vscode.window.registerWebviewViewProvider(
-            'mcp-feedback.feedbackPanelBottom',
-            feedbackBottomProvider,
-            {
-                webviewOptions: {
-                    retainContextWhenHidden: false  // Force reload
-                }
-            }
-        )
+            'mcp-feedback-v2.feedbackPanelBottom',
+            bottomProvider,
+            { webviewOptions: { retainContextWhenHidden: false } }
+        ),
     );
 
     // Register commands
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.openPanel', () => {
-            vscode.commands.executeCommand('workbench.view.extension.mcp-feedback');
+    disposables.push(
+        vscode.commands.registerCommand('mcp-feedback-v2.openPanel', () => {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
         }),
-        vscode.commands.registerCommand('mcp-feedback.focusInput', () => {
-            // Open the panel and focus the input
-            vscode.commands.executeCommand('workbench.view.extension.mcp-feedback');
-            // Send message to webview to focus input
-            feedbackViewProvider?.focusInput();
-        })
-    );
-
-    // Open in Editor (draggable tab)
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.openInEditor', () => {
-            openFeedbackInEditor(context);
-        })
-    );
-
-    // Open in Bottom Panel
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.openInBottom', () => {
-            // Focus the bottom panel container (panel uses workbench.panel.*)
-            vscode.commands.executeCommand('workbench.panel.mcp-feedback-bottom');
-        })
-    );
-
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.reconnect', () => {
-            if (feedbackViewProvider) {
-                feedbackViewProvider.reconnect();
-            }
-            if (editorPanel) {
-                editorPanel.webview.postMessage({ type: 'reconnect' });
-            }
-            vscode.window.showInformationMessage('MCP Feedback: Reconnecting to server...');
-        })
-    );
-
-    // Force reset command - completely restarts the WebSocket server
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.forceReset', async () => {
-            vscode.window.showInformationMessage('MCP Feedback: Force resetting...');
-
+        vscode.commands.registerCommand('mcp-feedback-v2.focusInput', () => {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+            sidebarProvider.focusInput();
+        }),
+        vscode.commands.registerCommand('mcp-feedback-v2.openInEditor', () => {
+            _openEditorPanel(context, port);
+        }),
+        vscode.commands.registerCommand('mcp-feedback-v2.openInBottom', () => {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+        }),
+        vscode.commands.registerCommand('mcp-feedback-v2.reconnect', () => {
+            sidebarProvider.reconnect();
+            bottomProvider.reconnect();
+        }),
+        vscode.commands.registerCommand('mcp-feedback-v2.forceReset', async () => {
             try {
-                if (wsServer) {
-                    const newPort = await wsServer.restart();
-                    console.log(`[MCP Feedback] Server restarted on port ${newPort}`);
-
-                    // Notify all webviews to reconnect
-                    if (feedbackViewProvider) {
-                        feedbackViewProvider.reconnect();
-                    }
-                    if (feedbackBottomProvider) {
-                        feedbackBottomProvider.reconnect();
-                    }
-                    if (editorPanel) {
-                        editorPanel.webview.postMessage({ type: 'reconnect' });
-                    }
-
-                    vscode.window.showInformationMessage(`MCP Feedback: Reset complete! Server on port ${newPort}`);
-                }
+                const newPort = await forceResetCallback();
+                vscode.window.showInformationMessage(`MCP Feedback: Reset! Server on port ${newPort}`);
             } catch (e) {
-                console.error('[MCP Feedback] Force reset failed:', e);
                 vscode.window.showErrorMessage(`MCP Feedback: Reset failed - ${e}`);
             }
-        })
+        }),
+        vscode.commands.registerCommand('mcp-feedback-v2.showStatus', () => {
+            const clients = wsServer.getConnectedClients();
+            vscode.window.showInformationMessage(
+                `MCP Feedback Status:\nPort: ${port}\nWebviews: ${clients.webviews}\nMCP Servers: ${clients.mcpServers}\nPending requests: ${wsServer.hasPendingRequests() ? 'Yes' : 'No'}`
+            );
+        }),
     );
 
-    // Show status command - for diagnostics
-    context.subscriptions.push(
-        vscode.commands.registerCommand('mcp-feedback.showStatus', () => {
-            if (wsServer) {
-                const status = wsServer.getStatus();
-                const msg = `MCP Feedback Status:
-- Server: ${status.running ? 'Running' : 'Stopped'}
-- Port: ${status.port}
-- Connected clients: ${status.clients.length}
-  ${status.clients.map(c => `  - ${c.type}: ${c.projectPath || 'no project'}`).join('\n')}
-- Pending feedback: ${status.pendingFeedback}`;
-
-                vscode.window.showInformationMessage(msg, { modal: true });
-            } else {
-                vscode.window.showWarningMessage('MCP Feedback: Server not initialized');
-            }
-        })
+    // Watch workspace changes
+    disposables.push(
+        vscode.workspace.onDidChangeWorkspaceFolders(() => {
+            wsServer.setWorkspaces(getWorkspaces());
+            wsServer.refreshServerRegistration();
+        }),
     );
 
-    // Auto-open sidebar panel on startup to ensure webview is ready
-    // This ensures the panel is initialized before any MCP feedback requests come in
+    // Auto-configure MCP and deploy hooks
+    ensureMcpConfig();
+    deployCursorHooks(context.extensionPath);
+
+    // Auto-open sidebar after short delay
     setTimeout(() => {
-        vscode.commands.executeCommand('workbench.view.extension.mcp-feedback');
-        console.log('[MCP Feedback] Auto-opened sidebar panel');
+        vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
     }, 1000);
 
-    console.log('[MCP Feedback] Extension activation complete');
-
-    // Auto-configure MCP server
-    ensureMcpConfig();
-
-    // Deploy Cursor hooks for real-time pending comment injection
-    deployCursorHooks(context);
+    context.subscriptions.push(...disposables);
+    console.log(`[MCP Feedback] Activated on port ${port}`);
 }
 
-/**
- * Ensure MCP server is configured in ~/.cursor/mcp.json
- * Uses npx to always resolve the latest version from npm - no path issues on upgrades.
- */
-async function ensureMcpConfig(): Promise<void> {
-    try {
-        const mcpConfigPath = path.join(os.homedir(), '.cursor', 'mcp.json');
-
-        let config: any = { mcpServers: {} };
-
-        // Read existing config
-        if (fs.existsSync(mcpConfigPath)) {
-            try {
-                const content = fs.readFileSync(mcpConfigPath, 'utf-8');
-                config = JSON.parse(content);
-                if (!config.mcpServers) {
-                    config.mcpServers = {};
-                }
-            } catch (e) {
-                console.error('[MCP Feedback] Failed to parse mcp.json:', e);
-                return;
-            }
-        }
-
-        // Check if already configured with npx approach
-        if (config.mcpServers['mcp-feedback-enhanced']) {
-            const current = config.mcpServers['mcp-feedback-enhanced'];
-            if (current.command === 'npx' && current.args?.[1]?.startsWith('mcp-feedback-enhanced@')) {
-                console.log('[MCP Feedback] MCP server already configured (npx)');
-                return;
-            }
-            // Migrate from old local-path approach to npx
-            console.log('[MCP Feedback] Migrating MCP config to npx approach');
-        }
-
-        // Use npx - always resolves latest version, no path issues
-        config.mcpServers['mcp-feedback-enhanced'] = {
-            command: 'npx',
-            args: ['-y', 'mcp-feedback-enhanced@latest'],
-            timeout: 86400,
-            autoApprove: ['interactive_feedback']
-        };
-
-        // Ensure .cursor directory exists
-        const cursorDir = path.join(os.homedir(), '.cursor');
-        if (!fs.existsSync(cursorDir)) {
-            fs.mkdirSync(cursorDir, { recursive: true });
-        }
-
-        fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 4), 'utf-8');
-
-        console.log('[MCP Feedback] Auto-configured MCP server in ~/.cursor/mcp.json (npx)');
-        vscode.window.showInformationMessage('MCP Feedback Enhanced: MCP server auto-configured ✓');
-
-    } catch (e) {
-        console.error('[MCP Feedback] Failed to auto-configure MCP:', e);
-    }
+export function deactivate(): void {
+    console.log('[MCP Feedback] Deactivating...');
+    for (const d of disposables) { d.dispose(); }
+    disposables.length = 0;
+    wsServer?.stop();
 }
 
-/**
- * Deploy Cursor hooks for real-time pending comment injection
- * Copies hook script to ~/.config/mcp-feedback-enhanced/hooks/ and updates ~/.cursor/hooks.json
- */
-async function deployCursorHooks(context: vscode.ExtensionContext): Promise<void> {
-    try {
-        const cursorHooksPath = path.join(os.homedir(), '.cursor', 'hooks.json');
-        const hookScriptSource = path.join(context.extensionPath, 'scripts', 'hooks', 'check-pending.js');
-        const hookScriptTarget = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks', 'check-pending.js');
+// ─── Editor Panel ─────────────────────────────────────────
 
-        // Ensure target directory exists
-        const targetDir = path.dirname(hookScriptTarget);
-        if (!fs.existsSync(targetDir)) {
-            fs.mkdirSync(targetDir, { recursive: true });
-        }
-
-        // Copy hook script
-        fs.copyFileSync(hookScriptSource, hookScriptTarget);
-        console.log('[MCP Feedback] Hook script deployed to:', hookScriptTarget);
-
-        // Read existing hooks.json
-        let hooksConfig: any = { version: 1, hooks: {} };
-        if (fs.existsSync(cursorHooksPath)) {
-            try {
-                const content = fs.readFileSync(cursorHooksPath, 'utf-8');
-                hooksConfig = JSON.parse(content);
-                if (!hooksConfig.hooks) {
-                    hooksConfig.hooks = {};
-                }
-            } catch (e) {
-                console.error('[MCP Feedback] Failed to parse hooks.json, creating new one');
-                hooksConfig = { version: 1, hooks: {} };
-            }
-        }
-
-        // Define our hook entries
-        const hookEntry = {
-            command: `node ${hookScriptTarget}`,
-            _source: 'mcp-feedback-enhanced'
-        };
-
-        // Hook points we want to intercept
-        const hookPoints = [
-            'sessionStart', 'preToolUse',
-            'beforeShellExecution', 'beforeMCPExecution',
-            'subagentStart', 'stop'
-        ];
-
-        // Update each hook point
-        let updated = false;
-        for (const hookPoint of hookPoints) {
-            if (!hooksConfig.hooks[hookPoint]) {
-                hooksConfig.hooks[hookPoint] = [];
-            }
-
-            // Remove old entries from us
-            hooksConfig.hooks[hookPoint] = hooksConfig.hooks[hookPoint].filter(
-                (h: any) => h._source !== 'mcp-feedback-enhanced'
-            );
-
-            // Add our new entry
-            hooksConfig.hooks[hookPoint].push({ ...hookEntry });
-            updated = true;
-        }
-
-        // Write updated config
-        fs.writeFileSync(cursorHooksPath, JSON.stringify(hooksConfig, null, 4), 'utf-8');
-        console.log('[MCP Feedback] Cursor hooks configured in ~/.cursor/hooks.json');
-
-        if (updated) {
-            vscode.window.showInformationMessage('MCP Feedback Enhanced: Cursor hooks auto-configured ✓');
-        }
-
-    } catch (e) {
-        console.error('[MCP Feedback] Failed to deploy Cursor hooks:', e);
-    }
-}
-
-/**
- * Open feedback panel in editor area (draggable tab)
- */
-function openFeedbackInEditor(context: vscode.ExtensionContext) {
-    // If already exists, reveal it
-    if (editorPanel) {
-        editorPanel.reveal(vscode.ViewColumn.Beside);
-        return;
-    }
-
-    // Get server URL - use the Extension's WS server port
-    if (!wsServer) {
-        vscode.window.showErrorMessage('MCP Feedback: Server not started');
-        return;
-    }
-    const serverUrl = `ws://127.0.0.1:${wsServer.port}/ws`;
-
-    // Create webview panel
-    editorPanel = vscode.window.createWebviewPanel(
-        'mcp-feedback.editorPanel',
-        '💬 MCP Feedback',
+function _openEditorPanel(context: vscode.ExtensionContext, port: number): void {
+    const panel = vscode.window.createWebviewPanel(
+        'mcp-feedback-editor',
+        'MCP Feedback',
         vscode.ViewColumn.Beside,
         {
             enableScripts: true,
-            retainContextWhenHidden: true,
-            localResourceRoots: [context.extensionUri]
+            retainContextWhenHidden: false,
+            localResourceRoots: [vscode.Uri.file(path.join(context.extensionPath, 'out'))],
         }
     );
+    panel.webview.html = _loadWebviewHtml(context.extensionPath, port);
+}
 
-    const workspaceDir = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || '';
-    const sessionId = vscode.env.sessionId;
-    editorPanel.webview.html = loadWebviewHtml(context.extensionUri.fsPath, serverUrl, workspaceDir, sessionId);
+// ─── MCP Auto-Config ──────────────────────────────────────
 
-    // Handle messages
-    editorPanel.webview.onDidReceiveMessage((message) => {
-        switch (message.type) {
-            case 'feedback-submitted':
-                vscode.window.setStatusBarMessage('✅ Feedback submitted!', 1500);
-                break;
-            case 'error':
-                vscode.window.showErrorMessage(`MCP Feedback: ${message.message}`);
-                break;
-            case 'new-session':
-                editorPanel?.reveal(vscode.ViewColumn.Beside);
-                break;
+function ensureMcpConfig(): void {
+    try {
+        const mcpConfigPath = path.join(os.homedir(), '.cursor', 'mcp.json');
+        let config: Record<string, unknown> = {};
+
+        if (fs.existsSync(mcpConfigPath)) {
+            config = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
         }
-    }, undefined, context.subscriptions);
 
-    // Clean up on close
-    editorPanel.onDidDispose(() => {
-        editorPanel = undefined;
-    }, undefined, context.subscriptions);
-}
+        const mcpServers = (config.mcpServers || {}) as Record<string, unknown>;
+        const existing = mcpServers['mcp-feedback-v2'] as Record<string, unknown> | undefined;
 
+        const expectedCommand = 'npx';
+        const expectedArgs = ['-y', 'mcp-feedback-enhanced@latest'];
 
+        if (existing?.command === expectedCommand &&
+            JSON.stringify(existing?.args) === JSON.stringify(expectedArgs)) {
+            return;
+        }
 
-export function deactivate() {
-    console.log('MCP Feedback Enhanced extension deactivating...');
+        mcpServers['mcp-feedback-v2'] = {
+            command: expectedCommand,
+            args: expectedArgs,
+        };
+        config.mcpServers = mcpServers;
 
-    // Dispose providers
-    feedbackViewProvider?.dispose();
-    feedbackBottomProvider?.dispose();
-    feedbackViewProvider = undefined;
-    feedbackBottomProvider = undefined;
-
-    // Stop WebSocket Server
-    if (wsServer) {
-        wsServer.stop();
-        wsServer = undefined;
+        fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
+        fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
+        console.log('[MCP Feedback] MCP config updated');
+    } catch (e) {
+        console.error('[MCP Feedback] Failed to update MCP config:', e);
     }
-
-    // Clean up editor panel
-    editorPanel?.dispose();
-    editorPanel = undefined;
-
-    console.log('MCP Feedback Enhanced extension deactivated');
 }
 
+// ─── Cursor Hooks Deployment ──────────────────────────────
+
+function deployCursorHooks(extensionPath: string): void {
+    try {
+        const sourceHook = path.join(extensionPath, 'scripts', 'hooks', 'check-pending.js');
+        if (!fs.existsSync(sourceHook)) {
+            console.warn('[MCP Feedback] Hook script not found:', sourceHook);
+            return;
+        }
+
+        // Copy hook script to config dir
+        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
+        const targetHook = path.join(targetDir, 'check-pending.js');
+        fs.mkdirSync(targetDir, { recursive: true });
+        fs.copyFileSync(sourceHook, targetHook);
+
+        // Update ~/.cursor/hooks.json
+        const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
+        let hooksConfig: Record<string, unknown> = {};
+
+        if (fs.existsSync(hooksConfigPath)) {
+            hooksConfig = JSON.parse(fs.readFileSync(hooksConfigPath, 'utf-8'));
+        }
+
+        const hooks = (hooksConfig.hooks || []) as Array<Record<string, unknown>>;
+        const hookPoints = ['sessionStart', 'stop', 'preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'subagentStart'];
+
+        // Remove old entries for our hook
+        const filtered = hooks.filter(h => {
+            const cmd = (h.command || '') as string;
+            return !cmd.includes('check-pending.js');
+        });
+
+        // Add new entry
+        filtered.push({
+            command: `node "${targetHook}"`,
+            events: hookPoints,
+        });
+
+        hooksConfig.hooks = filtered;
+        fs.mkdirSync(path.dirname(hooksConfigPath), { recursive: true });
+        fs.writeFileSync(hooksConfigPath, JSON.stringify(hooksConfig, null, 2));
+        console.log('[MCP Feedback] Cursor hooks deployed');
+    } catch (e) {
+        console.error('[MCP Feedback] Failed to deploy hooks:', e);
+    }
+}

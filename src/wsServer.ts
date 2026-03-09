@@ -1,1032 +1,654 @@
 /**
- * WebSocket Server for MCP Feedback
- * 
- * Extension acts as the server, both Webview and MCP Server connect to it.
+ * WebSocket server: the central hub connecting webviews and MCP servers.
+ *
+ * Responsibilities:
+ * - Accept connections from webviews and MCP server clients
+ * - Route feedback requests (MCP → webview) by conversation_id
+ * - Route feedback responses (webview → MCP) by session_id
+ * - Handle pending message queue (webview → file → hook → agent)
+ * - Watch sessions/ directory for new hook-created session registrations
+ * - Watch pending/ directory for hook-consumed pending files
+ * - Register this extension instance in servers/<pid>.json
  */
 
-import WebSocket, { WebSocketServer } from 'ws';
+import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as os from 'os';
-import * as net from 'net';
-import Database from 'better-sqlite3';
+import { WebSocket, WebSocketServer } from 'ws';
+import type {
+    FeedbackRequest,
+    FeedbackResponse,
+    WSMessage,
+    ConversationMessage,
+} from './types';
+import {
+    writeServer,
+    deleteServer,
+    readSession,
+    writePending,
+    readPending,
+    deletePending,
+    readConversation,
+    writeConversation,
+    listConversations,
+    listSessions,
+    cleanupStaleServers,
+    cleanupStaleSessions,
+    cleanupStalePending,
+    cleanupLegacyPending,
+    getSessionsDir,
+    getPendingDir,
+} from './fileStore';
 
-// Read version from package.json
-const packageJson = require('../package.json');
-const VERSION = packageJson.version || '0.0.0';
+const VERSION = '2.0.0';
+const PORT_RANGE_START = 48200;
+const PORT_RANGE_END = 48300;
+const HEARTBEAT_INTERVAL = 30_000;
+const CLIENT_TIMEOUT = 90_000;
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
-const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
-const HISTORY_DIR = path.join(CONFIG_DIR, 'history');
-const HOOKS_DIR = path.join(CONFIG_DIR, 'hooks');
-const PENDING_FILE = path.join(CONFIG_DIR, 'pending.json');
-const DEFAULT_PORT = 8765;
-const MAX_PORT_RANGE = 100;       // Search 100 ports for available one
-const MAX_HISTORY_MESSAGES = 100; // Keep last 100 messages per project
-
-// Each Extension instance has its own server file: servers/<pid>.json
-function getServerFile(): string {
-    return path.join(SERVERS_DIR, `${process.pid}.json`);
-}
-
-interface Client {
-    ws: WebSocket.WebSocket;
-    type: 'webview' | 'mcp-server' | 'unknown';
+interface ConnectedClient {
+    ws: WebSocket;
+    clientType: 'webview' | 'mcp-server' | 'unknown';
     projectPath?: string;
-    sessionId?: string;
-    registeredAt: number;
+    lastPong: number;
 }
 
-interface HistoryMessage {
-    role: 'ai' | 'user';
-    content: string;
-    timestamp: string;
-    images?: string[];
-    workspace?: string;      // Current workspace path
-    project_directory?: string;  // MCP call's project_directory
-    agent_name?: string;
-}
-
-interface SessionRecord {
-    summary: string;
-    feedback: string;
-    timestamp: string;
-    images?: string[];
-}
-
-interface PendingFeedback {
+// Pending feedback requests awaiting user response
+interface PendingFeedbackRequest {
     sessionId: string;
-    summary: string;
-    projectPath: string;
-    agentName: string;
-    clientWs: WebSocket.WebSocket;  // Store reference to MCP Server WebSocket
-    resolve: (result: any) => void;
-    reject: (error: any) => void;
-    timeout: NodeJS.Timeout;
+    conversationId: string;
+    mcpClient: WebSocket;
+    resolve: (response: string) => void;
+    reject: (error: Error) => void;
+    timestamp: number;
 }
 
-export class FeedbackWebSocketServer {
-    private _wss: WebSocketServer | null = null;
-    private _clients: Map<WebSocket.WebSocket, Client> = new Map();
-    private _pendingFeedback: Map<string, PendingFeedback> = new Map();
-    private _port: number = DEFAULT_PORT;
-    private _onStatusChange: (status: string) => void;
-    private _onFeedbackRequest: (() => void) | null = null;
-    private _pendingPollInterval: NodeJS.Timeout | null = null;
-    private _heartbeatInterval: NodeJS.Timeout | null = null;
-    private _clientLastPong: Map<WebSocket.WebSocket, number> = new Map();  // Track last pong time
-    private static readonly HEARTBEAT_INTERVAL = 15000;  // 15 seconds
-    private static readonly HEARTBEAT_TIMEOUT = 45000;   // 45 seconds - 3 missed heartbeats
+export class FeedbackWSServer {
+    private server: http.Server | null = null;
+    private wss: WebSocketServer | null = null;
+    private port = 0;
+    private clients = new Map<WebSocket, ConnectedClient>();
+    private pendingRequests = new Map<string, PendingFeedbackRequest>(); // sessionId → request
+    private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private sessionsWatcher: fs.FSWatcher | null = null;
+    private pendingWatchers = new Map<string, ReturnType<typeof setInterval>>(); // conversationId → poll timer
+    private workspaces: string[] = [];
+    private cursorTraceId = '';
+    private onFeedbackRequested?: (conversationId: string) => void;
 
-    constructor(onStatusChange?: (status: string) => void) {
-        this._onStatusChange = onStatusChange || (() => { });
-        this._ensureDirectories();
+    setWorkspaces(workspaces: string[]): void {
+        this.workspaces = workspaces;
     }
 
-    /**
-     * Register callback for when feedback request comes in (to auto-open panel)
-     */
-    onFeedbackRequest(callback: () => void): void {
-        this._onFeedbackRequest = callback;
+    setCursorTraceId(traceId: string): void {
+        this.cursorTraceId = traceId;
     }
 
-    /**
-     * Force restart the WebSocket server (for recovery from broken state)
-     */
-    async restart(): Promise<number> {
-        console.log('[MCP Feedback WS] Force restarting server...');
-        this._stopInternal();
-
-        // Small delay to ensure port is released
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        // Clean up any stale server files
-        this._cleanupStaleServers();
-
-        // Restart
-        return this.start();
+    onFeedbackRequest(cb: (conversationId: string) => void): void {
+        this.onFeedbackRequested = cb;
     }
 
-    /**
-     * Get server status for diagnostics
-     */
-    getStatus(): {
-        running: boolean;
-        port: number;
-        clients: { type: string; projectPath?: string }[];
-        pendingFeedback: number;
-    } {
-        return {
-            running: this._wss !== null,
-            port: this._port,
-            clients: Array.from(this._clients.values()).map(c => ({
-                type: c.type,
-                projectPath: c.projectPath
-            })),
-            pendingFeedback: this._pendingFeedback.size
-        };
+    getPort(): number {
+        return this.port;
     }
 
-    private _pendingComment: string = '';
-    private _pendingWorkspace: string = '';
+    // ─── Startup ──────────────────────────────────────────
 
-    /**
-     * Update pending comment (from Webview).
-     * Writes plain text to pending.json for Cursor Hooks to read.
-     */
-    updatePendingComment(projectPath: string, comment: string): void {
-        this._pendingComment = comment || '';
-        this._pendingWorkspace = comment ? projectPath : '';
-        try {
-            if (comment) {
-                fs.writeFileSync(PENDING_FILE, comment, 'utf-8');
-            } else if (fs.existsSync(PENDING_FILE)) {
-                fs.unlinkSync(PENDING_FILE);
-            }
-        } catch (e) {
-            console.error('[MCP Feedback WS] Failed to write pending file:', e);
-        }
-    }
-
-    /**
-     * Poll pending.json to detect when the Cursor Hook consumes it.
-     * File gone + in-memory has pending → consumed → notify webview.
-     */
-    private _startPendingPoll(): void {
-        this._stopPendingPoll();
-        this._pendingPollInterval = setInterval(() => {
-            if (!this._pendingComment) return;
-            if (fs.existsSync(PENDING_FILE)) return;
-
-            const workspace = this._pendingWorkspace;
-            this._pendingComment = '';
-            this._pendingWorkspace = '';
-            console.log('[MCP Feedback WS] Pending consumed by hook');
-            if (workspace) {
-                const webviews = this._findWebviewsForProject(workspace);
-                webviews.forEach(wv => this._send(wv.ws, { type: 'pending-consumed' }));
-            }
-        }, 1500);
-    }
-
-    private _stopPendingPoll(): void {
-        if (this._pendingPollInterval) {
-            clearInterval(this._pendingPollInterval);
-            this._pendingPollInterval = null;
-        }
-    }
-
-    static getPendingFilePath(): string {
-        return PENDING_FILE;
-    }
-
-    static getHooksDir(): string {
-        return HOOKS_DIR;
-    }
-
-    getPendingComment(_projectPath: string): string {
-        return this._pendingComment;
-    }
-
-    private _ensureDirectories(): void {
-        if (!fs.existsSync(CONFIG_DIR)) {
-            fs.mkdirSync(CONFIG_DIR, { recursive: true });
-        }
-        if (!fs.existsSync(SERVERS_DIR)) {
-            fs.mkdirSync(SERVERS_DIR, { recursive: true });
-        }
-        if (!fs.existsSync(HISTORY_DIR)) {
-            fs.mkdirSync(HISTORY_DIR, { recursive: true });
-        }
-        if (!fs.existsSync(HOOKS_DIR)) {
-            fs.mkdirSync(HOOKS_DIR, { recursive: true });
-        }
-        // Clean up stale server files on startup
-        this._cleanupStaleServers();
-    }
-
-    /**
-     * Remove server files for dead processes
-     */
-    private _cleanupStaleServers(): void {
-        try {
-            const files = fs.readdirSync(SERVERS_DIR);
-            for (const file of files) {
-                if (!file.endsWith('.json')) continue;
-                const pid = parseInt(file.replace('.json', ''));
-                if (isNaN(pid)) continue;
-
-                // Check if process is alive
-                try {
-                    process.kill(pid, 0);
-                } catch {
-                    // Process is dead, remove file
-                    const filePath = path.join(SERVERS_DIR, file);
-                    fs.unlinkSync(filePath);
-                    console.log(`[MCP Feedback WS] Cleaned up stale server file: ${file}`);
-                }
-            }
-        } catch (e) {
-            // Ignore errors during cleanup
-        }
-    }
-
-    /**
-     * Start the WebSocket server
-     */
     async start(): Promise<number> {
-        this._port = await this._findAvailablePort(DEFAULT_PORT);
+        this.cleanup();
 
-        return new Promise((resolve, reject) => {
-            this._wss = new WebSocketServer({
-                port: this._port,
-                host: '127.0.0.1'
-            });
+        cleanupStaleServers();
+        cleanupStaleSessions();
+        cleanupStalePending();
+        cleanupLegacyPending();
 
-            this._wss.on('listening', () => {
-                console.log(`[MCP Feedback WS] Server listening on port ${this._port}`);
-                this._writeServerFile();
-                this._onStatusChange('running');
+        this.port = await this._findPort();
+        await this._startServer();
+        this._registerServer();
+        this._startHeartbeat();
+        this._watchSessionsDir();
 
-                // Start heartbeat monitoring
-                this._startHeartbeat();
-
-                this._startPendingPoll();
-
-                resolve(this._port);
-            });
-
-            this._wss.on('error', (err) => {
-                console.error(`[MCP Feedback WS] Server error: ${err}`);
-                reject(err);
-            });
-
-            this._wss.on('connection', (ws) => {
-                this._handleConnection(ws);
-            });
-        });
+        console.log(`[MCP Feedback] WebSocket server started on port ${this.port}`);
+        return this.port;
     }
 
-    /**
-     * Start heartbeat monitoring for dead connections
-     */
-    private _startHeartbeat(): void {
-        if (this._heartbeatInterval) {
-            clearInterval(this._heartbeatInterval);
+    async stop(): Promise<void> {
+        this.cleanup();
+    }
+
+    private cleanup(): void {
+        if (this.heartbeatTimer) {
+            clearInterval(this.heartbeatTimer);
+            this.heartbeatTimer = null;
         }
+        if (this.sessionsWatcher) {
+            this.sessionsWatcher.close();
+            this.sessionsWatcher = null;
+        }
+        for (const timer of this.pendingWatchers.values()) { clearInterval(timer); }
+        this.pendingWatchers.clear();
 
-        this._heartbeatInterval = setInterval(() => {
-            const now = Date.now();
+        for (const [, client] of this.clients) {
+            try { client.ws.close(); } catch { /* ignore */ }
+        }
+        this.clients.clear();
 
-            this._clients.forEach((client, ws) => {
-                // Check if client hasn't responded to ping in timeout period
-                const lastPong = this._clientLastPong.get(ws) || client.registeredAt;
-                if (now - lastPong > FeedbackWebSocketServer.HEARTBEAT_TIMEOUT) {
-                    console.log(`[MCP Feedback WS] Client heartbeat timeout: ${client.type}`);
-                    // Force close the connection
-                    try {
-                        ws.terminate();
-                    } catch (e) {
-                        // Ignore
-                    }
-                    this._clients.delete(ws);
-                    this._clientLastPong.delete(ws);
+        for (const [, req] of this.pendingRequests) {
+            req.reject(new Error('Server shutting down'));
+        }
+        this.pendingRequests.clear();
+
+        if (this.wss) { this.wss.close(); this.wss = null; }
+        if (this.server) { this.server.close(); this.server = null; }
+
+        deleteServer(process.pid);
+    }
+
+    // ─── Server Setup ─────────────────────────────────────
+
+    private _findPort(): Promise<number> {
+        return new Promise((resolve, reject) => {
+            const tryPort = (port: number) => {
+                if (port > PORT_RANGE_END) {
+                    reject(new Error('No available port'));
                     return;
                 }
-
-                // Send ping
-                if (ws.readyState === WebSocket.OPEN) {
-                    try {
-                        ws.ping();
-                    } catch (e) {
-                        // Ignore ping errors
-                    }
-                }
-            });
-        }, FeedbackWebSocketServer.HEARTBEAT_INTERVAL);
-    }
-
-    /**
-     * Stop the WebSocket server
-     */
-    stop(): void {
-        this._stopInternal();
-    }
-
-    private _stopInternal(): void {
-        this._stopPendingPoll();
-
-        if (this._wss) {
-            console.log('[MCP Feedback WS] Stopping server...');
-
-            // Clear heartbeat interval
-            if (this._heartbeatInterval) {
-                clearInterval(this._heartbeatInterval);
-                this._heartbeatInterval = null;
-            }
-
-            // Clear all pending feedback timeouts
-            this._pendingFeedback.forEach((pending) => {
-                clearTimeout(pending.timeout);
-            });
-            this._pendingFeedback.clear();
-
-            // Force close all client connections with error code
-            this._clients.forEach((client) => {
-                try {
-                    client.ws.close(1000, 'Server stopping');
-                } catch (e) {
-                    // Ignore close errors
-                }
-            });
-            this._clients.clear();
-
-            // Close server
-            try {
-                this._wss.close();
-            } catch (e) {
-                console.error('[MCP Feedback WS] Error closing server:', e);
-            }
-            this._wss = null;
-
-            // Remove server file
-            this._removeServerFile();
-
-            // Close database connection
-            this._closeDb();
-
-            console.log('[MCP Feedback WS] Server stopped');
-            this._onStatusChange('stopped');
-        }
-    }
-
-    /**
-     * Get current port
-     */
-    get port(): number {
-        return this._port;
-    }
-
-    /**
-     * Get connected client counts (used in status messages)
-     */
-    private getClientCounts(): { webviews: number; mcpServers: number } {
-        let webviews = 0;
-        let mcpServers = 0;
-        this._clients.forEach((client) => {
-            if (client.type === 'webview') webviews++;
-            if (client.type === 'mcp-server') mcpServers++;
+                const srv = http.createServer();
+                srv.once('error', () => tryPort(port + 1));
+                srv.once('listening', () => {
+                    srv.close(() => resolve(port));
+                });
+                srv.listen(port, '127.0.0.1');
+            };
+            tryPort(PORT_RANGE_START);
         });
-        return { webviews, mcpServers };
     }
 
-    private async _findAvailablePort(basePort: number): Promise<number> {
-        for (let p = basePort; p < basePort + MAX_PORT_RANGE; p++) {
-            if (await this._isPortAvailable(p)) {
-                return p;
-            }
-        }
-        throw new Error(`No available port found in range ${basePort}-${basePort + MAX_PORT_RANGE - 1}`);
-    }
-
-    private _isPortAvailable(port: number): Promise<boolean> {
+    private _startServer(): Promise<void> {
         return new Promise((resolve) => {
-            const server = net.createServer();
-            server.once('error', () => resolve(false));
-            server.once('listening', () => {
-                server.close();
-                resolve(true);
-            });
-            server.listen(port, '127.0.0.1');
+            this.server = http.createServer();
+            this.wss = new WebSocketServer({ server: this.server });
+            this.wss.on('connection', (ws) => this._handleConnection(ws));
+            this.server.listen(this.port, '127.0.0.1', () => resolve());
         });
     }
 
-    private _workspaces: string[] = [];
-
-    /**
-     * Set workspace paths (called from extension.ts)
-     */
-    setWorkspaces(workspaces: string[]): void {
-        this._workspaces = workspaces;
-        // Update server file with new workspace info
-        if (this._wss) {
-            this._writeServerFile();
-        }
-    }
-
-    private _writeServerFile(): void {
-        const data = {
-            port: this._port,
+    private _registerServer(): void {
+        writeServer({
+            port: this.port,
             pid: process.pid,
-            parentPid: process.ppid,  // Keep for backward compatibility
-            workspaces: this._workspaces,  // Workspace paths for matching
-            cursorTraceId: process.env['CURSOR_TRACE_ID'] || '',  // Unique ID per Cursor window
-            timestamp: Date.now()
-        };
-        const serverFile = getServerFile();
-        fs.writeFileSync(serverFile, JSON.stringify(data, null, 2));
-        console.log(`[MCP Feedback WS] Wrote server file: ${serverFile}, workspaces: ${this._workspaces.join(', ')}, traceId=${data.cursorTraceId}`);
+            workspaces: this.workspaces,
+            cursorTraceId: this.cursorTraceId,
+            version: VERSION,
+            started_at: Date.now(),
+        });
     }
 
-    private _removeServerFile(): void {
-        try {
-            const serverFile = getServerFile();
-            if (fs.existsSync(serverFile)) {
-                fs.unlinkSync(serverFile);
-                console.log(`[MCP Feedback WS] Removed server file: ${serverFile}`);
-            }
-        } catch (e) {
-            // Ignore
-        }
-    }
+    // ─── Connection Handling ──────────────────────────────
 
-    private _handleConnection(ws: WebSocket.WebSocket): void {
-        const client: Client = {
+    private _handleConnection(ws: WebSocket): void {
+        const client: ConnectedClient = {
             ws,
-            type: 'unknown',
-            registeredAt: Date.now()
+            clientType: 'unknown',
+            lastPong: Date.now(),
         };
-        this._clients.set(ws, client);
+        this.clients.set(ws, client);
 
-        console.log(`[MCP Feedback WS] Client connected, total: ${this._clients.size}`);
-
-        // Send welcome message
         this._send(ws, {
             type: 'connection_established',
-            message: 'Connected to MCP Feedback Extension Server',
-            version: VERSION
+            version: VERSION,
+            port: this.port,
         });
 
-        ws.on('message', (data) => {
+        ws.on('message', (raw) => {
             try {
-                const message = JSON.parse(data.toString());
-                this._handleMessage(ws, message);
+                const msg = JSON.parse(raw.toString()) as WSMessage;
+                this._handleMessage(ws, client, msg);
             } catch (e) {
-                console.error(`[MCP Feedback WS] Parse error: ${e}`);
+                console.error('[MCP Feedback] Parse error:', e);
             }
         });
+
+        ws.on('pong', () => { client.lastPong = Date.now(); });
 
         ws.on('close', () => {
-            const client = this._clients.get(ws);
-            console.log(`[MCP Feedback WS] Client disconnected: ${client?.type || 'unknown'}`);
-
-            // Clean up pending feedback for this MCP Server
-            if (client?.type === 'mcp-server') {
-                const toRemove: string[] = [];
-                this._pendingFeedback.forEach((pending, sessionId) => {
-                    if (pending.clientWs === ws) {
-                        clearTimeout(pending.timeout);
-                        toRemove.push(sessionId);
-                    }
-                });
-                toRemove.forEach(id => {
-                    this._pendingFeedback.delete(id);
-                    console.log(`[MCP Feedback WS] Cleaned up pending feedback: session=${id}`);
-                });
-            }
-
-            this._clients.delete(ws);
+            this.clients.delete(ws);
         });
 
-        ws.on('error', (err) => {
-            console.error(`[MCP Feedback WS] Client error: ${err}`);
-        });
-
-        // Handle pong responses for heartbeat
-        ws.on('pong', () => {
-            this._clientLastPong.set(ws, Date.now());
+        ws.on('error', () => {
+            this.clients.delete(ws);
         });
     }
 
-    private _handleMessage(ws: WebSocket.WebSocket, message: any): void {
-        const client = this._clients.get(ws);
-        if (!client) return;
-
-        console.log(`[MCP Feedback WS] Message from ${client.type}: ${message.type}`);
-
-        switch (message.type) {
+    private _handleMessage(ws: WebSocket, client: ConnectedClient, msg: WSMessage): void {
+        switch (msg.type) {
             case 'register':
-                // Client registration (webview or mcp-server)
-                client.type = message.clientType || 'webview';
-                client.projectPath = message.projectPath;
-                client.sessionId = message.sessionId;
-                console.log(`[MCP Feedback WS] Registered ${client.type}: project=${client.projectPath}`);
-
-                // Send history to webview
-                if (client.type === 'webview' && client.projectPath) {
-                    const messages = this._loadHistory(client.projectPath);
-                    const sessions = this._toSessionRecords(messages);
-                    this._send(ws, { type: 'history', sessions });
-
-                    // Send session list for history panel
-                    const sessionList = this._listSessions(client.projectPath);
-                    this._send(ws, { type: 'sessions_list', sessions: sessionList });
-                }
-
-                // Notify status
-                this._send(ws, {
-                    type: 'status_update',
-                    ...this.getClientCounts()
-                });
+                client.clientType = (msg.clientType as string) === 'mcp-server' ? 'mcp-server' : 'webview';
+                client.projectPath = msg.projectPath as string | undefined;
                 break;
 
             case 'feedback_request':
-                // From MCP Server: request feedback from webview
-                this._handleFeedbackRequest(client, message);
+                this._handleFeedbackRequest(ws, msg as unknown as FeedbackRequest);
                 break;
 
             case 'feedback_response':
-                // From Webview: user submitted feedback
-                this._handleFeedbackResponse(client, message);
+                this._handleFeedbackResponse(msg as unknown as FeedbackResponse);
                 break;
 
-            case 'get_history':
-                if (client.projectPath) {
-                    const messages = this._loadHistory(client.projectPath);
-                    const sessions = this._toSessionRecords(messages);
-                    this._send(ws, { type: 'history', sessions });
-                }
+            case 'queue-pending':
+                this._handleQueuePending(msg);
                 break;
 
             case 'get_sessions':
-                if (client.projectPath) {
-                    const sessionList = this._listSessions(client.projectPath);
-                    this._send(ws, { type: 'sessions_list', sessions: sessionList });
-                }
+                this._sendSessionsList(ws);
                 break;
 
-            case 'load_session':
-                if (client.projectPath && message.agent_name) {
-                    const sessionMessages = this._loadSessionByAgent(client.projectPath, message.agent_name);
-                    const sessionRecords = this._toSessionRecords(sessionMessages);
-                    this._send(ws, {
-                        type: 'session_loaded',
-                        agent_name: message.agent_name,
-                        sessions: sessionRecords,
-                        messages: sessionMessages
-                    });
-                }
+            case 'get_conversations':
+                this._sendConversationsList(ws);
+                break;
+
+            case 'load_conversation':
+                this._sendConversationData(ws, msg.conversation_id as string);
+                break;
+
+            case 'dismiss_feedback':
+                this._handleDismiss(msg.session_id as string);
                 break;
 
             case 'ping':
             case 'heartbeat':
-                // Update last pong time for application-level pings too
-                this._clientLastPong.set(ws, Date.now());
+                client.lastPong = Date.now();
                 this._send(ws, { type: 'pong' });
                 break;
-
-            case 'get_pending_comment':
-                // MCP Server requesting pending comment
-                const pPath = message.project_directory || client.projectPath;
-                if (pPath) {
-                    const comment = this.getPendingComment(pPath);
-                    this._send(ws, {
-                        type: 'pending_comment_result',
-                        request_id: message.request_id,
-                        project_directory: pPath,
-                        comment
-                    });
-                }
-                break;
         }
     }
 
-    private _handleFeedbackRequest(client: Client, message: any): void {
-        const { session_id, summary, project_directory, timeout, agent_name } = message;
+    // ─── Feedback Flow ────────────────────────────────────
 
-        console.log(`[MCP Feedback WS] Feedback request: session=${session_id}, project=${project_directory}, agent=${agent_name || 'default'}`);
+    private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest): void {
+        const sessionId = req.session_id || this._generateId();
+        const conversationId = req.conversation_id || '';
 
-        // Notify extension to auto-open panel
-        if (this._onFeedbackRequest) {
-            this._onFeedbackRequest();
+        if (conversationId) {
+            this._ensureConversation(conversationId, req.summary);
         }
 
-        // Find all webviews for this project (in this window's server)
-        // With CURSOR_TRACE_ID matching, MCP server connects to correct window's server
-        const webviews = this._findWebviewsForProject(project_directory);
-
-        // Use webview's projectPath as workspace
-        const workspace = webviews.length > 0 && webviews[0].projectPath
-            ? webviews[0].projectPath
-            : project_directory;
-
-        // Add AI message to global history with both workspace and project_directory
-        this._addToHistory(workspace, {
-            role: 'ai',
-            content: summary,
-            timestamp: new Date().toISOString()
-        }, project_directory, agent_name || 'Agent');
-
-        if (webviews.length === 0) {
-            // No webview connected - send error back to MCP Server
-            this._send(client.ws, {
-                type: 'feedback_error',
-                session_id,
-                error: 'No feedback panel connected. Please open the MCP Feedback panel in Cursor sidebar.'
+        // Store the pending request for resolution
+        const promise = new Promise<string>((resolve, reject) => {
+            this.pendingRequests.set(sessionId, {
+                sessionId,
+                conversationId,
+                mcpClient: mcpWs,
+                resolve,
+                reject,
+                timestamp: Date.now(),
             });
-            return;
-        }
+        });
 
-        // Broadcast to all webviews in this window (with agent_name for multi-agent UI)
-        const sessionMsg = {
+        // Broadcast to all webviews
+        this._broadcastToWebviews({
             type: 'session_updated',
             session_info: {
-                session_id,
-                summary,
-                project_directory,
-                timeout,
-                agent_name  // Pass through for multi-agent display
-            }
-        };
-        webviews.forEach(wv => this._send(wv.ws, sessionMsg));
-        console.log(`[MCP Feedback WS] Broadcast to ${webviews.length} webview(s)`);
-
-        // Store pending feedback with timeout
-        const timeoutMs = (timeout || 86400) * 1000;
-        const timeoutHandle = setTimeout(() => {
-            const pending = this._pendingFeedback.get(session_id);
-            if (pending) {
-                pending.reject(new Error('Feedback timeout'));
-                this._pendingFeedback.delete(session_id);
-            }
-        }, timeoutMs);
-
-        this._pendingFeedback.set(session_id, {
-            sessionId: session_id,
-            summary,
-            projectPath: project_directory,
-            agentName: agent_name || 'Agent',
-            clientWs: client.ws,
-            resolve: (result) => {
-                // Check if MCP Server connection is still alive
-                if (client.ws.readyState === WebSocket.OPEN) {
-                    this._send(client.ws, {
-                        type: 'feedback_result',
-                        session_id,
-                        ...result
-                    });
-                } else {
-                    console.log(`[MCP Feedback WS] Cannot send result - MCP Server disconnected: session=${session_id}`);
-                    // The MCP Server will timeout on its side
-                }
+                session_id: sessionId,
+                conversation_id: conversationId,
+                summary: req.summary,
             },
-            reject: (error) => {
-                // Check if MCP Server connection is still alive
-                if (client.ws.readyState === WebSocket.OPEN) {
-                    this._send(client.ws, {
-                        type: 'feedback_error',
-                        session_id,
-                        error: error.message
-                    });
-                } else {
-                    console.log(`[MCP Feedback WS] Cannot send error - MCP Server disconnected: session=${session_id}`);
-                }
-            },
-            timeout: timeoutHandle
+        });
+
+        // Notify extension for panel focus
+        if (this.onFeedbackRequested) {
+            this.onFeedbackRequested(conversationId);
+        }
+
+        // Wait for response and send back to MCP
+        promise.then((feedback) => {
+            this._send(mcpWs, {
+                type: 'feedback_result',
+                session_id: sessionId,
+                success: true,
+                feedback,
+            });
+        }).catch((err) => {
+            this._send(mcpWs, {
+                type: 'feedback_error',
+                session_id: sessionId,
+                error: err.message,
+            });
         });
     }
 
-    private _handleFeedbackResponse(client: Client, message: any): void {
-        const { session_id, feedback, images, dismissed } = message;
-
-        if (!session_id) {
-            console.log(`[MCP Feedback WS] Ignoring feedback response without session_id`);
+    private _handleFeedbackResponse(res: FeedbackResponse): void {
+        const pending = this.pendingRequests.get(res.session_id);
+        if (!pending) {
+            console.warn(`[MCP Feedback] No pending request for session ${res.session_id}`);
             return;
         }
 
-        console.log(`[MCP Feedback WS] Feedback response: session=${session_id}, dismissed=${!!dismissed}`);
-
-        // Get project_directory from pending feedback (if exists)
-        const pending = this._pendingFeedback.get(session_id);
-        const projectDirectory = pending?.projectPath;  // This is actually project_directory from MCP call
-
-        // Add user message to history (skip if dismissed)
-        const workspace = client.projectPath || '';
-        if (workspace && !dismissed) {
-            this._addToHistory(workspace, {
+        // Save to conversation history
+        const convId = pending.conversationId || res.conversation_id;
+        if (convId) {
+            this._addMessage(convId, {
                 role: 'user',
-                content: feedback,
+                content: res.feedback,
                 timestamp: new Date().toISOString(),
-                images
-            }, projectDirectory, pending?.agentName);  // Pass project_directory as second param and agentName as fourth
+                session_id: res.session_id,
+                images: res.images,
+            });
+
+            // Update conversation state
+            const conv = readConversation(convId);
+            if (conv) {
+                conv.state = 'running';
+                writeConversation(conv);
+            }
         }
 
-        // Notify all webviews that feedback was submitted (for multi-panel sync)
-        // Also send updated history so all panels stay in sync
-        const webviews = this._findWebviewsForProject(workspace);
-        const history = this._loadHistory(workspace);
-        const sessions = this._toSessionRecords(history);
-        webviews.forEach(wv => {
-            if (wv.ws !== client.ws) { // Don't send to submitter
-                this._send(wv.ws, { type: 'feedback_submitted', session_id });
-                this._send(wv.ws, { type: 'history', sessions });
-            }
+        // Append hidden follow-instructions reminder
+        const feedbackWithReminder = res.feedback +
+            '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
+
+        pending.resolve(feedbackWithReminder);
+        this.pendingRequests.delete(res.session_id);
+
+        // Notify webviews
+        this._broadcastToWebviews({
+            type: 'feedback_submitted',
+            session_id: res.session_id,
+            conversation_id: convId,
+        });
+    }
+
+    private _handleDismiss(sessionId: string): void {
+        const pending = this.pendingRequests.get(sessionId);
+        if (pending) {
+            pending.resolve('[Dismissed by user]');
+            this.pendingRequests.delete(sessionId);
+
+            this._broadcastToWebviews({
+                type: 'feedback_submitted',
+                session_id: sessionId,
+                conversation_id: pending.conversationId,
+            });
+        }
+    }
+
+    // ─── Pending Queue ────────────────────────────────────
+
+    private _handleQueuePending(msg: WSMessage): void {
+        const conversationId = msg.conversation_id as string;
+        if (!conversationId) { return; }
+
+        // Webview sends the full pending queue, not individual items
+        const comments = msg.comments as string[] | undefined;
+        const singleText = msg.text as string | undefined;
+
+        let queue: string[];
+        if (comments && Array.isArray(comments)) {
+            queue = comments.filter(c => c.trim());
+        } else if (singleText?.trim()) {
+            const existing = readPending(conversationId);
+            queue = existing ? [...existing.comments, singleText.trim()] : [singleText.trim()];
+        } else {
+            deletePending(conversationId);
+            return;
+        }
+
+        if (queue.length === 0) {
+            deletePending(conversationId);
+            return;
+        }
+
+        writePending({
+            conversation_id: conversationId,
+            server_pid: process.pid,
+            comments: queue,
+            timestamp: Date.now(),
         });
 
-        // Resolve/reject pending feedback (reuse pending from earlier)
-        if (pending) {
-            clearTimeout(pending.timeout);
+        // Sync conversation's pending_queue
+        const conv = readConversation(conversationId);
+        if (conv) {
+            conv.pending_queue = queue;
+            writeConversation(conv);
+        }
 
-            if (dismissed) {
-                // User dismissed without response - reject
-                pending.reject(new Error('User dismissed the feedback request'));
-            } else {
-                // Normal feedback response
-                pending.resolve({
-                    feedback,
-                    images: images || []
+        this._watchPendingFile(conversationId);
+    }
+
+    private _watchPendingFile(conversationId: string): void {
+        if (this.pendingWatchers.has(conversationId)) { return; }
+
+        const pendingDir = getPendingDir();
+        const filePath = path.join(pendingDir, `${conversationId}.json`);
+
+        const timer = setInterval(() => {
+            if (!fs.existsSync(filePath)) {
+                clearInterval(timer);
+                this.pendingWatchers.delete(conversationId);
+
+                this._broadcastToWebviews({
+                    type: 'pending-consumed',
+                    conversation_id: conversationId,
                 });
+
+                const conv = readConversation(conversationId);
+                if (conv && conv.pending_queue.length > 0) {
+                    const delivered = conv.pending_queue.join('\n\n');
+                    conv.pending_queue = [];
+                    conv.messages.push({
+                        role: 'system',
+                        content: `Pending delivered:\n\n> ${delivered.split('\n').join('\n> ')}`,
+                        timestamp: new Date().toISOString(),
+                    });
+                    writeConversation(conv);
+                }
             }
-            this._pendingFeedback.delete(session_id);
+        }, 500);
+
+        this.pendingWatchers.set(conversationId, timer);
+    }
+
+    // ─── Sessions Directory Watcher ───────────────────────
+
+    private _watchSessionsDir(): void {
+        const dir = getSessionsDir();
+        try {
+            this.sessionsWatcher = fs.watch(dir, (eventType, filename) => {
+                if (!filename?.endsWith('.json')) { return; }
+                const conversationId = filename.replace('.json', '');
+                const session = readSession(conversationId);
+
+                if (session) {
+                    // New session registered by hook
+                    this._onSessionRegistered(session);
+                } else {
+                    // Session file deleted (sessionEnd or cleanup)
+                    this._onSessionEnded(conversationId);
+                }
+            });
+        } catch (e) {
+            console.error('[MCP Feedback] Failed to watch sessions dir:', e);
+        }
+    }
+
+    private _onSessionRegistered(session: import('./types').SessionRegistration): void {
+        // Only handle sessions for this extension instance
+        if (session.server_pid !== process.pid) { return; }
+
+        // Create or update conversation data
+        let conv = readConversation(session.conversation_id);
+        if (!conv) {
+            const modelShort = session.model?.split('-')[0] || 'Agent';
+            const time = new Date(session.started_at).toLocaleTimeString('en-US', {
+                hour: '2-digit', minute: '2-digit', hour12: false,
+            });
+            conv = {
+                conversation_id: session.conversation_id,
+                model: session.model,
+                workspace_roots: session.workspace_roots,
+                started_at: session.started_at,
+                ended_at: null,
+                label: `${modelShort} | ${time}`,
+                state: 'idle',
+                messages: [],
+                pending_queue: [],
+                server_pid: process.pid,
+                is_background: false,
+            };
         } else {
-            console.log(`[MCP Feedback WS] No pending feedback for session ${session_id}`);
+            conv.state = conv.state === 'archived' ? 'idle' : conv.state;
+            conv.server_pid = process.pid;
+            conv.ended_at = null;
+        }
+        writeConversation(conv);
+
+        // Notify webviews
+        this._broadcastToWebviews({
+            type: 'session_registered',
+            session,
+            conversation: conv,
+        });
+    }
+
+    private _onSessionEnded(conversationId: string): void {
+        const conv = readConversation(conversationId);
+        if (conv && conv.server_pid === process.pid) {
+            conv.state = 'ended';
+            conv.ended_at = Date.now();
+            writeConversation(conv);
+
+            this._broadcastToWebviews({
+                type: 'session_ended',
+                conversation_id: conversationId,
+            });
         }
     }
 
-    /**
-     * Find all webviews that match the project (for broadcasting)
-     */
-    private _findWebviewsForProject(projectPath: string, singleOnly: boolean = false): Client[] {
-        const exactMatches: Client[] = [];
-        const prefixMatches: Client[] = [];
+    // ─── Conversation Helpers ─────────────────────────────
 
-        for (const [, client] of this._clients) {
-            if (client.type !== 'webview') continue;
-
-            // Exact match (highest priority)
-            if (client.projectPath === projectPath) {
-                exactMatches.push(client);
-                continue;
-            }
-
-            // Path prefix match
-            if (client.projectPath) {
-                if (projectPath.startsWith(client.projectPath) || client.projectPath.startsWith(projectPath)) {
-                    prefixMatches.push(client);
-                }
-            }
+    private _ensureConversation(conversationId: string, summary?: string): void {
+        let conv = readConversation(conversationId);
+        if (!conv) {
+            conv = {
+                conversation_id: conversationId,
+                model: '',
+                workspace_roots: this.workspaces,
+                started_at: Date.now(),
+                ended_at: null,
+                label: `Agent | ${new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false })}`,
+                state: 'waiting',
+                messages: [],
+                pending_queue: [],
+                server_pid: process.pid,
+                is_background: false,
+            };
         }
 
-        // Prefer exact matches over prefix matches
-        let matches = exactMatches.length > 0 ? exactMatches : prefixMatches;
+        conv.state = 'waiting';
 
-        // Fallback: all webviews if no match
-        if (matches.length === 0) {
-            for (const [, client] of this._clients) {
-                if (client.type === 'webview') {
-                    matches.push(client);
-                }
-            }
-            if (matches.length > 0) {
-                console.log(`[MCP Feedback WS] Using fallback: ${matches.length} webview(s)`);
-            }
+        if (summary) {
+            conv.messages.push({
+                role: 'ai',
+                content: summary,
+                timestamp: new Date().toISOString(),
+            });
         }
 
-        // If multiple matches and singleOnly requested, return most recently registered
-        if (singleOnly && matches.length > 1) {
-            matches.sort((a, b) => b.registeredAt - a.registeredAt);
-            console.log(`[MCP Feedback WS] Multiple webviews matched, using most recent (sessionId=${matches[0].sessionId})`);
-            return [matches[0]];
-        }
-
-        return matches;
+        writeConversation(conv);
     }
 
-    private _send(ws: WebSocket.WebSocket, data: any): void {
+    private _addMessage(conversationId: string, message: ConversationMessage): void {
+        const conv = readConversation(conversationId);
+        if (conv) {
+            conv.messages.push(message);
+            writeConversation(conv);
+        }
+    }
+
+    // ─── Data Queries ─────────────────────────────────────
+
+    private _sendSessionsList(ws: WebSocket): void {
+        const sessions = listSessions().filter(s => s.server_pid === process.pid);
+        this._send(ws, { type: 'sessions_list', sessions });
+    }
+
+    private _sendConversationsList(ws: WebSocket): void {
+        const conversations = listConversations()
+            .filter(c => c.server_pid === process.pid)
+            .map(c => ({
+                conversation_id: c.conversation_id,
+                model: c.model,
+                label: c.label,
+                state: c.state,
+                started_at: c.started_at,
+                ended_at: c.ended_at,
+                message_count: c.messages.length,
+                pending_count: c.pending_queue.length,
+                is_background: c.is_background,
+            }));
+        this._send(ws, { type: 'conversations_list', conversations });
+    }
+
+    private _sendConversationData(ws: WebSocket, conversationId: string): void {
+        const conv = readConversation(conversationId);
+        if (conv) {
+            this._send(ws, { type: 'conversation_loaded', conversation: conv });
+        }
+    }
+
+    // ─── Heartbeat ────────────────────────────────────────
+
+    private _startHeartbeat(): void {
+        this.heartbeatTimer = setInterval(() => {
+            const now = Date.now();
+            for (const [ws, client] of this.clients) {
+                if (now - client.lastPong > CLIENT_TIMEOUT) {
+                    try { ws.close(); } catch { /* ignore */ }
+                    this.clients.delete(ws);
+                    continue;
+                }
+                try { ws.ping(); } catch { /* ignore */ }
+            }
+        }, HEARTBEAT_INTERVAL);
+    }
+
+    // ─── Utilities ────────────────────────────────────────
+
+    private _send(ws: WebSocket, data: Record<string, unknown>): void {
         if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify(data));
         }
     }
 
-    // ============================================================================
-    // History management - SQLite storage
-    // ============================================================================
-
-    private static readonly DB_FILE = path.join(HISTORY_DIR, 'history.db');
-    private _db: Database.Database | null = null;
-
-    /**
-     * Get or create SQLite database connection
-     */
-    private _getDb(): Database.Database {
-        if (this._db) return this._db;
-
-        try {
-            this._db = new Database(FeedbackWebSocketServer.DB_FILE);
-
-            // Create table if not exists
-            this._db.exec(`
-                CREATE TABLE IF NOT EXISTS history (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    role TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    images TEXT,
-                    workspace TEXT,
-                    project_directory TEXT,
-                    created_at INTEGER DEFAULT (strftime('%s', 'now'))
-                );
-                CREATE INDEX IF NOT EXISTS idx_workspace ON history(workspace);
-                CREATE INDEX IF NOT EXISTS idx_project_directory ON history(project_directory);
-            `);
-
-            // Migration: add agent_name column
-            try {
-                this._db.exec(`ALTER TABLE history ADD COLUMN agent_name TEXT DEFAULT 'Agent'`);
-                this._db.exec(`CREATE INDEX IF NOT EXISTS idx_agent_name ON history(agent_name)`);
-            } catch (e) {
-                // Column already exists, ignore
-            }
-
-            console.log(`[MCP Feedback WS] SQLite database initialized: ${FeedbackWebSocketServer.DB_FILE}`);
-            return this._db;
-        } catch (e) {
-            console.error(`[MCP Feedback WS] Failed to initialize database: ${e}`);
-            throw e;
-        }
-    }
-
-    /**
-     * Close database connection (call on shutdown)
-     */
-    private _closeDb(): void {
-        if (this._db) {
-            this._db.close();
-            this._db = null;
-        }
-    }
-
-    /**
-     * Load history filtered by workspace or project
-     */
-    private _loadHistory(workspace: string): HistoryMessage[] {
-        try {
-            const db = this._getDb();
-            const stmt = db.prepare(`
-                SELECT role, content, timestamp, images, workspace, project_directory, agent_name
-                FROM history
-                WHERE workspace = ? OR project_directory = ?
-                ORDER BY id ASC
-                LIMIT ?
-            `);
-
-            const rows = stmt.all(workspace, workspace, MAX_HISTORY_MESSAGES * 2) as any[];
-
-            return rows.map(row => ({
-                role: row.role as 'ai' | 'user',
-                content: row.content,
-                timestamp: row.timestamp,
-                images: row.images ? JSON.parse(row.images) : undefined,
-                workspace: row.workspace,
-                project_directory: row.project_directory,
-                agent_name: row.agent_name
-            }));
-        } catch (e) {
-            console.error(`[MCP Feedback WS] Failed to load history: ${e}`);
-            return [];
-        }
-    }
-
-    /**
-     * List distinct sessions grouped by agent_name
-     */
-    private _listSessions(workspace: string): any[] {
-        try {
-            const db = this._getDb();
-            const stmt = db.prepare(`
-                SELECT 
-                    agent_name,
-                    COUNT(*) as message_count,
-                    MAX(timestamp) as last_timestamp,
-                    MIN(CASE WHEN role = 'ai' THEN timestamp END) as first_timestamp
-                FROM history
-                WHERE workspace = ? OR project_directory = ?
-                GROUP BY agent_name
-                ORDER BY MAX(created_at) DESC
-            `);
-
-            const sessions = stmt.all(workspace, workspace) as any[];
-
-            // Get the last AI summary for each session as preview
-            const previewStmt = db.prepare(`
-                SELECT content FROM history 
-                WHERE (workspace = ? OR project_directory = ?) AND agent_name = ? AND role = 'ai'
-                ORDER BY id DESC LIMIT 1
-            `);
-
-            return sessions.map(s => {
-                const preview = previewStmt.get(workspace, workspace, s.agent_name) as any;
-                return {
-                    agent_name: s.agent_name,
-                    message_count: s.message_count,
-                    last_timestamp: s.last_timestamp,
-                    first_timestamp: s.first_timestamp,
-                    preview: preview ? preview.content.substring(0, 100) : ''
-                };
-            });
-        } catch (e) {
-            console.error(`[MCP Feedback WS] Failed to list sessions: ${e}`);
-            return [];
-        }
-    }
-
-    /**
-     * Load history messages for a specific agent_name session
-     */
-    private _loadSessionByAgent(workspace: string, agentName: string): HistoryMessage[] {
-        try {
-            const db = this._getDb();
-            const stmt = db.prepare(`
-                SELECT role, content, timestamp, images, workspace, project_directory, agent_name
-                FROM history
-                WHERE (workspace = ? OR project_directory = ?) AND agent_name = ?
-                ORDER BY id ASC
-                LIMIT ?
-            `);
-
-            const rows = stmt.all(workspace, workspace, agentName, MAX_HISTORY_MESSAGES * 2) as any[];
-
-            return rows.map(row => ({
-                role: row.role as 'ai' | 'user',
-                content: row.content,
-                timestamp: row.timestamp,
-                images: row.images ? JSON.parse(row.images) : undefined,
-                workspace: row.workspace,
-                project_directory: row.project_directory,
-                agent_name: row.agent_name
-            }));
-        } catch (e) {
-            console.error(`[MCP Feedback WS] Failed to load session by agent: ${e}`);
-            return [];
-        }
-    }
-
-    /**
-     * Convert raw messages to session records for webview display
-     */
-    private _toSessionRecords(messages: HistoryMessage[]): SessionRecord[] {
-        const sessions: SessionRecord[] = [];
-        let currentSession: Partial<SessionRecord> = {};
-
-        for (const msg of messages) {
-            if (msg.role === 'ai') {
-                // New AI message = new session
-                if (currentSession.summary) {
-                    sessions.push(currentSession as SessionRecord);
-                }
-                currentSession = {
-                    summary: msg.content,
-                    feedback: '',
-                    timestamp: msg.timestamp
-                };
-            } else if (msg.role === 'user') {
-                currentSession.feedback = msg.content;
-                currentSession.images = msg.images;
-                sessions.push(currentSession as SessionRecord);
-                currentSession = {};
+    private _broadcastToWebviews(data: Record<string, unknown>): void {
+        for (const [ws, client] of this.clients) {
+            if (client.clientType === 'webview') {
+                this._send(ws, data);
             }
         }
-
-        // Add incomplete session (AI waiting for response)
-        if (currentSession.summary) {
-            sessions.push(currentSession as SessionRecord);
-        }
-
-        return sessions;
     }
 
-    /**
-     * Add message to history
-     */
-    private _addToHistory(workspace: string, message: HistoryMessage, projectDirectory?: string, agentName?: string): void {
-        try {
-            const db = this._getDb();
-            const stmt = db.prepare(`
-                INSERT INTO history (role, content, timestamp, images, workspace, project_directory, agent_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            `);
+    private _generateId(): string {
+        return `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    }
 
-            stmt.run(
-                message.role,
-                message.content,
-                message.timestamp,
-                message.images ? JSON.stringify(message.images) : null,
-                workspace,
-                projectDirectory || null,
-                agentName || 'Agent'
-            );
+    // ─── Public getters for extension ─────────────────────
 
-            // Cleanup old records (keep last N * 3 globally)
-            const cleanupStmt = db.prepare(`
-                DELETE FROM history
-                WHERE id NOT IN (
-                    SELECT id FROM history ORDER BY id DESC LIMIT ?
-                )
-            `);
-            cleanupStmt.run(MAX_HISTORY_MESSAGES * 3);
-
-        } catch (e) {
-            console.error(`[MCP Feedback WS] Failed to add to history: ${e}`);
+    getConnectedClients(): { webviews: number; mcpServers: number } {
+        let webviews = 0, mcpServers = 0;
+        for (const [, c] of this.clients) {
+            if (c.clientType === 'webview') { webviews++; }
+            else if (c.clientType === 'mcp-server') { mcpServers++; }
         }
+        return { webviews, mcpServers };
+    }
+
+    hasPendingRequests(): boolean {
+        return this.pendingRequests.size > 0;
+    }
+
+    // Re-register server info (e.g., after workspace change)
+    refreshServerRegistration(): void {
+        this._registerServer();
     }
 }

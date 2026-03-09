@@ -1,18 +1,14 @@
 #!/usr/bin/env node
 /**
- * Cursor Hook: Check Pending Comments
+ * Cursor Hooks script for MCP Feedback Enhanced.
  *
- * Injects pending user feedback into the agent loop at every actionable hook point.
- * pending.json is a plain-text file (the comment itself). On consume the file is deleted.
+ * Handles: sessionStart, stop, preToolUse, beforeShellExecution,
+ *          beforeMCPExecution, subagentStart
  *
- * Hook points (6 total):
- * - sessionStart:           Inject as additional_context + clear.
- * - preToolUse:             Deny non-allowlisted tools (agent sees reason). Never clears
- *                           because Cursor ignores preToolUse deny for Shell/MCP tools.
- * - beforeShellExecution:   Block + clear.
- * - beforeMCPExecution:     Block + clear.
- * - subagentStart:          Block subagent creation + clear.
- * - stop:                   Deliver as followup or remind to call interactive_feedback.
+ * Core design: conversation_id is the single source of truth.
+ * - sessionStart: register session + inject conversation_id + USAGE RULES via additional_context
+ * - All hooks: read pending/<conversation_id>.json, inject if exists
+ * - stop: safety net reminder
  */
 
 const fs = require('fs');
@@ -20,119 +16,241 @@ const path = require('path');
 const os = require('os');
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
-const PENDING_FILE = path.join(CONFIG_DIR, 'pending.json');
+const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
+const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
+const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
-const STOP_LOOP_LIMIT = 2;
-const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'get_pending_comment'];
-const FOLLOW_INSTRUCTIONS =
-    'You MUST call the interactive_feedback tool now to check in with the user before ending. ' +
-    'Provide a clear summary of what was done and ask for next steps.';
+const STOP_LOOP_LIMIT = 3;
+const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
 
-function readInput() {
+const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info'];
+
+const USAGE_RULES = [
+    '[MCP Feedback Enhanced] USAGE RULES:',
+    '1. You MUST call interactive_feedback before ending your turn.',
+    '2. Only when the user explicitly confirms you can stop should you end. The decision to exit is ALWAYS the user\'s, never yours.',
+    '3. If you have completed your task, call interactive_feedback with a summary and ask the user for next steps.',
+    '4. Always pass your conversation_id (provided below) when calling interactive_feedback.',
+].join('\n');
+
+// ─── Helpers ──────────────────────────────────────────────
+
+function output(obj) {
+    process.stdout.write(JSON.stringify(obj));
+}
+
+function readJSON(filePath) {
     try {
-        return JSON.parse(fs.readFileSync(0, 'utf-8'));
-    } catch {
-        return {};
-    }
+        if (!fs.existsSync(filePath)) return null;
+        return JSON.parse(fs.readFileSync(filePath, 'utf-8'));
+    } catch { return null; }
 }
 
-function output(response) {
-    console.log(JSON.stringify(response));
+function fmtAgent(text) {
+    return `[MCP Feedback Enhanced - User Message]\n${text}\n\nRemember: call interactive_feedback before ending.`;
 }
 
-function getPending() {
+// ─── Pending ──────────────────────────────────────────────
+
+function getPending(conversationId) {
+    if (!conversationId) return null;
+    return readJSON(path.join(PENDING_DIR, `${conversationId}.json`));
+}
+
+function consumePending(conversationId) {
+    if (!conversationId) return;
+    const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
+    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+}
+
+// ─── Server Matching ──────────────────────────────────────
+
+function findServerPid(workspaceRoots) {
     try {
-        if (!fs.existsSync(PENDING_FILE)) return null;
-        const text = fs.readFileSync(PENDING_FILE, 'utf-8').trim();
-        return text || null;
-    } catch {
-        return null;
-    }
+        if (!fs.existsSync(SERVERS_DIR)) return null;
+        const files = fs.readdirSync(SERVERS_DIR).filter(f => f.endsWith('.json'));
+        const servers = [];
+
+        for (const f of files) {
+            const s = readJSON(path.join(SERVERS_DIR, f));
+            if (!s || !s.pid) continue;
+            // Check if process is alive
+            try { process.kill(s.pid, 0); } catch { continue; }
+            servers.push(s);
+        }
+
+        if (servers.length === 0) return null;
+        if (servers.length === 1) return servers[0].pid;
+
+        // Match by workspace
+        const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
+        for (const s of servers) {
+            const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
+            if (roots.some(r => sWs.includes(r))) return s.pid;
+        }
+
+        // Match by CURSOR_TRACE_ID
+        const traceId = process.env.CURSOR_TRACE_ID || '';
+        if (traceId) {
+            for (const s of servers) {
+                if (s.cursorTraceId === traceId) return s.pid;
+            }
+        }
+
+        return servers[0].pid;
+    } catch { return null; }
 }
 
-function consumePending() {
-    try { fs.unlinkSync(PENDING_FILE); } catch { /* best effort */ }
-}
+// ─── Main ─────────────────────────────────────────────────
 
-function fmtAgent(comment) {
-    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + comment + '"\n\nIf this feedback asks a question, seeks discussion, or needs confirmation, call interactive_feedback to respond. If it is guidance or instructions, adjust your plan and continue working.';
-}
-
-function fmtUser(comment) {
-    return 'Pending comment delivered: "' + comment + '"';
-}
-
-// ---------------------------------------------------------------------------
 function main() {
-    const input = readInput();
-    const hook = input.hook_event_name || 'unknown';
-    const loopCount = input.loop_count || 0;
-    const toolName = input.tool_name || '';
-    const pending = getPending();
+    let input;
+    try {
+        input = JSON.parse(fs.readFileSync('/dev/stdin', 'utf-8'));
+    } catch {
+        output({ continue: true });
+        return;
+    }
 
-    // ---- stop ----
+    const hook = input.hook_event_name || '';
+    const conversationId = input.conversation_id || '';
+    const loopCount = input.loop_count || 0;
+    const workspaceRoots = input.workspace_roots || [];
+
+    // ─── sessionStart ─────────────────────────────────
+    if (hook === 'sessionStart') {
+        const serverPid = findServerPid(workspaceRoots);
+        const envOutput = serverPid ? { MCP_FEEDBACK_SERVER_PID: String(serverPid) } : {};
+
+        // Register session
+        if (conversationId && serverPid) {
+            try {
+                fs.mkdirSync(SESSIONS_DIR, { recursive: true });
+                fs.writeFileSync(
+                    path.join(SESSIONS_DIR, `${conversationId}.json`),
+                    JSON.stringify({
+                        conversation_id: conversationId,
+                        workspace_roots: workspaceRoots,
+                        model: input.model || '',
+                        server_pid: serverPid,
+                        started_at: Date.now(),
+                    })
+                );
+            } catch {}
+        }
+
+        // Build additional_context with conversation_id + USAGE RULES
+        const contextParts = [USAGE_RULES];
+        if (conversationId) {
+            contextParts.push(`\nYour conversation ID: ${conversationId}`);
+            contextParts.push(`When calling interactive_feedback, pass conversation_id="${conversationId}" (exact value, do not modify).`);
+        }
+
+        // Check for pending
+        const pending = getPending(conversationId);
+        if (pending && pending.comments && pending.comments.length > 0) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            contextParts.push(`\n[Pending User Message]\n${combined}`);
+        }
+
+        output({
+            continue: true,
+            env: envOutput,
+            additional_context: contextParts.join('\n'),
+        });
+        return;
+    }
+
+    // ─── stop ─────────────────────────────────────────
     if (hook === 'stop') {
-        if (loopCount >= STOP_LOOP_LIMIT) { output({}); return; }
-        if (pending) {
-            consumePending();
-            output({ followup_message: fmtAgent(pending) });
+        if (loopCount >= STOP_LOOP_LIMIT) {
+            output({});
+            return;
+        }
+
+        const pending = getPending(conversationId);
+        if (pending && pending.comments && pending.comments.length > 0) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            output({ followup_message: fmtAgent(combined) });
         } else {
             output({ followup_message: FOLLOW_INSTRUCTIONS });
         }
         return;
     }
 
-    // No pending -> allow everything
-    if (!pending) {
-        if (hook === 'preToolUse')                                                output({ decision: 'allow' });
-        else if (hook === 'beforeShellExecution' || hook === 'beforeMCPExecution') output({ permission: 'allow' });
-        else if (hook === 'sessionStart')                                         output({ continue: true });
-        else if (hook === 'subagentStart')                                        output({ decision: 'allow' });
-        else                                                                      output({});
-        return;
-    }
-
-    // ---- sessionStart ----
-    if (hook === 'sessionStart') {
-        consumePending();
-        output({ continue: true, additional_context: fmtAgent(pending) });
-        return;
-    }
-
-    // ---- preToolUse: deny all, never clear (Cursor ignores deny for Shell/MCP) ----
+    // ─── preToolUse ───────────────────────────────────
     if (hook === 'preToolUse') {
-        if (ALLOWLIST_TOOLS.includes(toolName)) { output({ decision: 'allow' }); return; }
-        output({ decision: 'deny', reason: fmtAgent(pending) });
-        return;
-    }
+        const toolName = input.tool_name || '';
+        const pending = getPending(conversationId);
 
-    // ---- beforeShellExecution: block + clear ----
-    if (hook === 'beforeShellExecution') {
-        consumePending();
-        output({ permission: 'deny', user_message: fmtUser(pending), agent_message: fmtAgent(pending) });
-        return;
-    }
-
-    // ---- beforeMCPExecution: block + clear (allow allowlisted tools) ----
-    if (hook === 'beforeMCPExecution') {
-        if (ALLOWLIST_TOOLS.includes(toolName)) {
-            consumePending();
-            output({ permission: 'allow', agent_message: fmtAgent(pending) });
+        if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(toolName)) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            output({
+                decision: 'deny',
+                reason: fmtAgent(combined),
+            });
             return;
         }
-        consumePending();
-        output({ permission: 'deny', user_message: fmtUser(pending), agent_message: fmtAgent(pending) });
+
+        output({});
         return;
     }
 
-    // ---- subagentStart: block subagent creation ----
+    // ─── beforeShellExecution ─────────────────────────
+    if (hook === 'beforeShellExecution') {
+        const pending = getPending(conversationId);
+        if (pending && pending.comments && pending.comments.length > 0) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            output({
+                decision: 'deny',
+                agent_message: fmtAgent(combined),
+            });
+            return;
+        }
+        output({});
+        return;
+    }
+
+    // ─── beforeMCPExecution ──────────────────────────
+    if (hook === 'beforeMCPExecution') {
+        const mcpTool = input.tool_name || '';
+        const pending = getPending(conversationId);
+
+        if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(mcpTool)) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            output({
+                decision: 'deny',
+                agent_message: fmtAgent(combined),
+            });
+            return;
+        }
+        output({});
+        return;
+    }
+
+    // ─── subagentStart ───────────────────────────────
     if (hook === 'subagentStart') {
-        consumePending();
-        output({ decision: 'deny', reason: fmtAgent(pending) });
+        const pending = getPending(conversationId);
+        if (pending && pending.comments && pending.comments.length > 0) {
+            const combined = pending.comments.join('\n\n');
+            consumePending(conversationId);
+            output({
+                decision: 'deny',
+                agent_message: fmtAgent(combined),
+            });
+            return;
+        }
+        output({});
         return;
     }
 
-    output({});
+    // Default: pass through
+    output({ continue: true });
 }
 
 main();
