@@ -299,12 +299,14 @@ export class FeedbackWSServer {
         });
 
         // Broadcast to all webviews
+        const conv = readConversation(conversationId);
         this._broadcastToWebviews({
             type: 'session_updated',
             session_info: {
                 session_id: sessionId,
                 conversation_id: conversationId,
                 summary: req.summary,
+                label: conv?.label,
             },
         });
 
@@ -397,9 +399,9 @@ export class FeedbackWSServer {
         const conversationId = msg.conversation_id as string;
         if (!conversationId) { return; }
 
-        // Webview sends the full pending queue, not individual items
         const comments = msg.comments as string[] | undefined;
         const singleText = msg.text as string | undefined;
+        const images = (msg.images as string[] | undefined) || [];
 
         let queue: string[];
         if (comments && Array.isArray(comments)) {
@@ -408,18 +410,17 @@ export class FeedbackWSServer {
             const existing = readPending(conversationId);
             queue = existing ? [...existing.comments, singleText.trim()] : [singleText.trim()];
         } else {
+            queue = [];
+        }
+
+        if (queue.length === 0 && images.length === 0) {
             deletePending(conversationId);
-            this._broadcastToWebviews({ type: 'pending_synced', conversation_id: conversationId, comments: [] });
+            const conv = readConversation(conversationId);
+            if (conv) { conv.pending_queue = []; writeConversation(conv); }
+            this._broadcastToWebviews({ type: 'pending_synced', conversation_id: conversationId, comments: [], images: [] });
             return;
         }
 
-        if (queue.length === 0) {
-            deletePending(conversationId);
-            this._broadcastToWebviews({ type: 'pending_synced', conversation_id: conversationId, comments: [] });
-            return;
-        }
-
-        const images = (msg.images as string[] | undefined) || [];
         writePending({
             conversation_id: conversationId,
             server_pid: process.pid,
@@ -428,18 +429,14 @@ export class FeedbackWSServer {
             timestamp: Date.now(),
         });
 
-        // Sync conversation's pending_queue
         const conv = readConversation(conversationId);
-        if (conv) {
-            conv.pending_queue = queue;
-            writeConversation(conv);
-        }
+        if (conv) { conv.pending_queue = queue; writeConversation(conv); }
 
-        // Broadcast to all webviews so other panels stay in sync
         this._broadcastToWebviews({
             type: 'pending_synced',
             conversation_id: conversationId,
             comments: queue,
+            images,
         });
 
         this._watchPendingFile(conversationId);
@@ -479,19 +476,33 @@ export class FeedbackWSServer {
         const pendingDir = getPendingDir();
         const filePath = path.join(pendingDir, `${conversationId}.json`);
 
+        // Snapshot what's in the pending file so we can report after hook consumes it
+        let lastKnownComments: string[] = [];
+        let lastKnownImageCount = 0;
+        try {
+            const data = readPending(conversationId);
+            if (data) {
+                lastKnownComments = data.comments || [];
+                lastKnownImageCount = (data.images || []).length;
+            }
+        } catch {}
+
         const timer = setInterval(() => {
             if (!fs.existsSync(filePath)) {
                 clearInterval(timer);
                 this.pendingWatchers.delete(conversationId);
 
                 const conv = readConversation(conversationId);
-                const deliveredComments = conv ? [...conv.pending_queue] : [];
+                const deliveredComments = lastKnownComments.length > 0 ? lastKnownComments : (conv ? [...conv.pending_queue] : []);
 
                 if (conv) {
-                    if (deliveredComments.length > 0) {
+                    const parts: string[] = [];
+                    if (deliveredComments.length > 0) parts.push(deliveredComments.map(c => `"${c}"`).join(', '));
+                    if (lastKnownImageCount > 0) parts.push(`${lastKnownImageCount} image${lastKnownImageCount > 1 ? 's' : ''}`);
+                    if (parts.length > 0) {
                         conv.messages.push({
                             role: 'system',
-                            content: `📤 Pending delivered (${deliveredComments.length}): ${deliveredComments.map(c => `"${c}"`).join(', ')}`,
+                            content: `📤 Pending delivered: ${parts.join(' + ')}`,
                             timestamp: new Date().toISOString(),
                         });
                     }
@@ -503,6 +514,7 @@ export class FeedbackWSServer {
                     type: 'pending_delivered',
                     conversation_id: conversationId,
                     comments: deliveredComments,
+                    image_count: lastKnownImageCount,
                 });
             }
         }, 500);

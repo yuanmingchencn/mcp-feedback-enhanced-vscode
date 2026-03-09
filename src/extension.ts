@@ -47,7 +47,7 @@ function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
 }
 
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
-    console.log('[MCP Feedback] Activating extension...');
+    // Avoid console.log during activation — it opens the Output panel and steals focus
 
     wsServer = new FeedbackWSServer();
     wsServer.setWorkspaces(getWorkspaces());
@@ -84,7 +84,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         vscode.window.registerWebviewViewProvider(
             'mcp-feedback-enhanced.feedbackPanelBottom',
             bottomProvider,
-            { webviewOptions: { retainContextWhenHidden: false } }
+            { webviewOptions: { retainContextWhenHidden: true } }
         ),
     );
 
@@ -125,7 +125,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     deployCursorHooks(context.extensionPath);
 
     context.subscriptions.push(...disposables);
-    console.log(`[MCP Feedback] Activated on port ${port}`);
+    // Port info available via showStatus command
 
     setTimeout(() => {
         vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
@@ -182,7 +182,7 @@ function ensureMcpConfig(extensionPath: string): void {
 
         fs.mkdirSync(path.dirname(mcpConfigPath), { recursive: true });
         fs.writeFileSync(mcpConfigPath, JSON.stringify(config, null, 2));
-        console.log('[MCP Feedback] MCP config updated');
+        // MCP config written
     } catch (e) {
         console.error('[MCP Feedback] Failed to update MCP config:', e);
     }
@@ -231,7 +231,7 @@ function deployCursorHooks(extensionPath: string): void {
         hooksConfig.hooks = hooks;
         fs.mkdirSync(path.dirname(hooksConfigPath), { recursive: true });
         fs.writeFileSync(hooksConfigPath, JSON.stringify(hooksConfig, null, 2));
-        console.log('[MCP Feedback] Cursor hooks deployed');
+        // Hooks deployed
     } catch (e) {
         console.error('[MCP Feedback] Failed to deploy hooks:', e);
     }

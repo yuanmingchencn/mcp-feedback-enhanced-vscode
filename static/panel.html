@@ -640,12 +640,15 @@ const SESSION_ID = '{{SESSION_ID}}';
     });
 
     sendBtn.addEventListener('click', smartSend);
+    let saveTimer = null;
     input.addEventListener('input', () => {
         updateSendButton();
         if (activeTabId) {
             const tab = tabs.get(activeTabId);
             if (tab) tab.inputDraft = input.value;
         }
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveState, 500);
     });
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); smartSend(); }
@@ -732,7 +735,7 @@ const SESSION_ID = '{{SESSION_ID}}';
             case 'session_updated': {
                 const info = msg.session_info || {};
                 const id = info.conversation_id || '';
-                const tab = getOrCreateTab(id, null, null, 'waiting');
+                const tab = getOrCreateTab(id, info.label || null, null, 'waiting');
                 tab.state = 'waiting';
                 tab.pendingSessionId = info.session_id;
                 tab.messages.push({ role: 'ai', content: info.summary || '', timestamp: new Date().toISOString() });
@@ -819,14 +822,19 @@ const SESSION_ID = '{{SESSION_ID}}';
                 const tab = tabs.get(msg.conversation_id);
                 if (tab) {
                     const comments = msg.comments || [];
-                    if (comments.length > 0) {
+                    const imgCount = msg.image_count || 0;
+                    const parts = [];
+                    if (comments.length > 0) parts.push(comments.map(c => '"' + c + '"').join(', '));
+                    if (imgCount > 0) parts.push(imgCount + ' image' + (imgCount > 1 ? 's' : ''));
+                    if (parts.length > 0) {
                         tab.messages.push({
                             role: 'system',
-                            content: '📤 Pending delivered (' + comments.length + '): ' + comments.map(c => '"' + c + '"').join(', '),
+                            content: '📤 Pending delivered: ' + parts.join(' + '),
                             timestamp: new Date().toISOString(),
                         });
                     }
                     tab.pendingQueue = [];
+                    tab.pendingImages = [];
                     if (msg.conversation_id === activeTabId) {
                         renderMessages(); renderPending();
                     }
@@ -853,6 +861,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 const tab = tabs.get(msg.conversation_id);
                 if (tab) {
                     tab.pendingQueue = msg.comments || [];
+                    if (msg.images !== undefined) tab.pendingImages = msg.images;
                     if (msg.conversation_id === activeTabId) renderPending();
                     saveState();
                 }
