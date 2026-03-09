@@ -340,8 +340,12 @@ export class FeedbackWSServer {
             if (conv) {
                 conv.state = 'running';
                 conv.active_session_id = null;
+                conv.pending_queue = [];
                 writeConversation(conv);
             }
+
+            // Clean up pending file to prevent hook double-consumption
+            deletePending(convId);
         }
 
         // Append hidden follow-instructions reminder

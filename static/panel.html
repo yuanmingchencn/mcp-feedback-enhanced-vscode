@@ -529,6 +529,10 @@ const SESSION_ID = '{{SESSION_ID}}';
                     const combined = tab.pendingQueue.join('\n\n');
                     tab.pendingQueue = [];
                     renderPending();
+                    // Clear the pending file on disk so hooks don't double-consume
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify({ type: 'queue-pending', conversation_id: id, comments: [] }));
+                    }
                     submitFeedback(combined);
                     return;
                 }
