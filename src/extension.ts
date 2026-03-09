@@ -64,9 +64,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
     }
 
-    // Focus panel when agent requests feedback
+    // Focus panels when agent requests feedback
     wsServer.onFeedbackRequest(() => {
-        vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
+        if (cfg.get('showInSidebar', true)) {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        }
+        if (cfg.get('showInBottomPanel', true)) {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+        }
     });
 
     // Create providers
@@ -152,9 +158,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
 
-    // Auto-open sidebar after short delay
+    // Auto-open panels after short delay
     setTimeout(() => {
-        vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        const cfg = vscode.workspace.getConfiguration('mcp-feedback-v2');
+        if (cfg.get('showInSidebar', true)) {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanel.focus');
+        }
+        if (cfg.get('showInBottomPanel', true)) {
+            vscode.commands.executeCommand('mcp-feedback-v2.feedbackPanelBottom.focus');
+        }
     }, 1000);
 
     context.subscriptions.push(...disposables);
