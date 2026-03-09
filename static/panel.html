@@ -283,6 +283,10 @@ const SESSION_ID = '{{SESSION_ID}}';
         }
         renderTabBar(); renderMessages(); renderPending(); updateSendButton();
         saveState();
+        // Notify server so other panels sync
+        if (ws && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'close_tab', conversation_id: id }));
+        }
     }
 
     function getOrCreateTab(id, label, model, state) {
@@ -598,6 +602,30 @@ const SESSION_ID = '{{SESSION_ID}}';
                 tab.pendingQueue = conv.pending_queue || [];
                 if (conv.conversation_id === activeTabId) { renderMessages(); renderPending(); }
                 saveState();
+                break;
+            }
+
+            case 'tab_closed': {
+                const cid = msg.conversation_id;
+                if (cid && tabs.has(cid)) {
+                    tabs.delete(cid);
+                    if (activeTabId === cid) {
+                        const keys = Array.from(tabs.keys());
+                        activeTabId = keys.length > 0 ? keys[keys.length - 1] : null;
+                    }
+                    renderTabBar(); renderMessages(); renderPending(); updateSendButton();
+                    saveState();
+                }
+                break;
+            }
+
+            case 'pending_synced': {
+                const tab = tabs.get(msg.conversation_id);
+                if (tab) {
+                    tab.pendingQueue = msg.comments || [];
+                    if (msg.conversation_id === activeTabId) renderPending();
+                    saveState();
+                }
                 break;
             }
 

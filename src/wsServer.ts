@@ -256,6 +256,10 @@ export class FeedbackWSServer {
                 this._handleDismiss(msg.session_id as string);
                 break;
 
+            case 'close_tab':
+                this._handleCloseTab(msg.conversation_id as string);
+                break;
+
             case 'ping':
             case 'heartbeat':
                 client.lastPong = Date.now();
@@ -396,11 +400,13 @@ export class FeedbackWSServer {
             queue = existing ? [...existing.comments, singleText.trim()] : [singleText.trim()];
         } else {
             deletePending(conversationId);
+            this._broadcastToWebviews({ type: 'pending_synced', conversation_id: conversationId, comments: [] });
             return;
         }
 
         if (queue.length === 0) {
             deletePending(conversationId);
+            this._broadcastToWebviews({ type: 'pending_synced', conversation_id: conversationId, comments: [] });
             return;
         }
 
@@ -418,7 +424,42 @@ export class FeedbackWSServer {
             writeConversation(conv);
         }
 
+        // Broadcast to all webviews so other panels stay in sync
+        this._broadcastToWebviews({
+            type: 'pending_synced',
+            conversation_id: conversationId,
+            comments: queue,
+        });
+
         this._watchPendingFile(conversationId);
+    }
+
+    private _handleCloseTab(conversationId: string): void {
+        if (!conversationId) return;
+
+        const conv = readConversation(conversationId);
+        if (conv) {
+            conv.state = 'archived';
+            conv.ended_at = Date.now();
+            conv.active_session_id = null;
+            writeConversation(conv);
+        }
+
+        // Clean up pending
+        deletePending(conversationId);
+
+        // Cancel any pending feedback request for this conversation
+        for (const [sid, req] of this.pendingRequests) {
+            if (req.conversationId === conversationId) {
+                req.resolve('[Tab closed by user]');
+                this.pendingRequests.delete(sid);
+            }
+        }
+
+        this._broadcastToWebviews({
+            type: 'tab_closed',
+            conversation_id: conversationId,
+        });
     }
 
     private _watchPendingFile(conversationId: string): void {
