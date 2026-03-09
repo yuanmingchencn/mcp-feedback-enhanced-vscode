@@ -101,13 +101,13 @@ function consumePending(conversationId) {
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
     try { if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return; } } catch {}
 
-    // Fallback: remove first pending file with content
+    // Fallback: remove first pending file with any content (text or images)
     try {
         if (!fs.existsSync(PENDING_DIR)) return;
         const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
         for (const f of files) {
             const p = readJSON(path.join(PENDING_DIR, f));
-            if (p && p.comments && p.comments.length > 0) {
+            if (hasPendingContent(p)) {
                 try { fs.unlinkSync(path.join(PENDING_DIR, f)); } catch {}
                 break;
             }

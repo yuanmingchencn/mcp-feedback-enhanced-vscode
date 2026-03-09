@@ -61,8 +61,11 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         return;
     }
 
-    wsServer.onFeedbackRequest(() => {
-        vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
+    wsServer.onFeedbackRequest(async () => {
+        try {
+            await vscode.commands.executeCommand('workbench.view.extension.mcp-feedback-enhanced-bottom');
+            await vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
+        } catch { /* ignore */ }
     });
 
     const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
@@ -127,10 +130,14 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     context.subscriptions.push(...disposables);
     // Port info available via showStatus command
 
-    // Retry focus to overcome other panels stealing it during startup
-    const focusCmd = 'mcp-feedback-enhanced.feedbackPanelBottom.focus';
+    const activatePanel = async () => {
+        try {
+            await vscode.commands.executeCommand('workbench.view.extension.mcp-feedback-enhanced-bottom');
+            await vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
+        } catch { /* commands may not be ready yet */ }
+    };
     for (const delay of [1500, 3000, 5000]) {
-        setTimeout(() => vscode.commands.executeCommand(focusCmd), delay);
+        setTimeout(activatePanel, delay);
     }
 }
 

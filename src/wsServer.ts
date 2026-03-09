@@ -504,7 +504,7 @@ export class FeedbackWSServer {
                     if (parts.length > 0) {
                         conv.messages.push({
                             role: 'system',
-                            content: `📤 Pending delivered: ${parts.join(' + ')}`,
+                            content: `<span class="hint-badge">📤 Delivered → Agent</span> ${parts.join(' + ')}`,
                             timestamp: new Date().toISOString(),
                         });
                     }

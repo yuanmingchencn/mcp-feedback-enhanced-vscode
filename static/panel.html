@@ -119,15 +119,21 @@ body{
   border-top-right-radius:4px;
 }
 .msg-row.system .message{
-  background:linear-gradient(135deg,rgba(245,158,11,0.08),rgba(251,191,36,0.04));
-  font-size:12.5px;color:#fbbf24;
-  padding:8px 16px;max-width:90%;
+  background:transparent;
+  font-size:11px;color:var(--fg-dim);
+  padding:4px 12px;max-width:100%;
   letter-spacing:.3px;
-  border:1px solid rgba(245,158,11,0.2);
-  border-radius:8px;
-  font-weight:500;
-  text-align:center;
-  line-height:1.5;
+  border:none;border-radius:0;
+  font-weight:400;text-align:center;
+  opacity:.7;
+}
+.msg-row.system .message .hint-badge{
+  display:inline-block;
+  background:rgba(245,158,11,0.1);
+  border:1px solid rgba(245,158,11,0.25);
+  color:#fbbf24;font-size:11px;font-weight:500;
+  padding:3px 10px;border-radius:12px;
+  letter-spacing:.2px;
 }
 .message .header{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fg-dim);margin-bottom:5px}
 .message .header .role{font-weight:700;text-transform:uppercase;letter-spacing:.5px}
@@ -274,28 +280,34 @@ body{
   box-shadow:0 0 8px rgba(124,58,237,0.15);
 }
 .settings-panel{
-  display:none;padding:14px 16px;
-  border-top:1px solid var(--border);
-  background:linear-gradient(180deg,rgba(124,58,237,0.06),rgba(124,58,237,0.02));
+  display:none;
+  margin:6px 10px;padding:0;
+  border:1px solid rgba(124,58,237,0.3);
+  border-radius:12px;overflow:hidden;
+  background:var(--input-bg);
+  box-shadow:0 4px 20px rgba(0,0,0,0.3),0 0 1px rgba(124,58,237,0.3);
 }
-.settings-panel.visible{display:block;animation:msg-in .2s ease-out}
+.settings-panel.visible{display:block;animation:settings-in .25s ease-out}
+@keyframes settings-in{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:translateY(0)}}
 .settings-panel-title{
-  font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;
-  color:#a78bfa;margin-bottom:12px;
-  padding-bottom:6px;border-bottom:1px solid rgba(124,58,237,0.15);
+  font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+  color:#a78bfa;padding:10px 14px 8px;
+  background:linear-gradient(135deg,rgba(124,58,237,0.12),rgba(124,58,237,0.04));
+  border-bottom:1px solid rgba(124,58,237,0.15);
 }
+.settings-panel-body{padding:10px 14px 12px}
 .settings-panel label{
-  display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:8px;
-  cursor:pointer;padding:8px 12px;border-radius:8px;
+  display:flex;align-items:center;gap:10px;font-size:12px;margin-bottom:6px;
+  cursor:pointer;padding:7px 10px;border-radius:8px;
   border:1px solid transparent;transition:all .15s;
 }
-.settings-panel label:hover{background:var(--surface);border-color:var(--border)}
+.settings-panel label:hover{background:rgba(124,58,237,0.06);border-color:rgba(124,58,237,0.12)}
 .settings-panel input[type="checkbox"]{
-  accent-color:#7c3aed;width:16px;height:16px;cursor:pointer;
+  accent-color:#7c3aed;width:15px;height:15px;cursor:pointer;
 }
 .settings-panel input[type="text"]{
-  width:100%;background:var(--input-bg);color:var(--fg);
-  border:1px solid var(--border);border-radius:8px;padding:7px 12px;
+  width:100%;background:rgba(0,0,0,0.2);color:var(--fg);
+  border:1px solid var(--border);border-radius:8px;padding:6px 12px;
   font-size:12px;margin-top:4px;transition:all .2s;
 }
 .settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.12)}
@@ -313,9 +325,11 @@ body{
   <div class="settings-toggle"><button id="settingsBtn" title="Settings">⚙</button></div>
 </div>
 <div class="settings-panel" id="settingsPanel">
-  <div class="settings-panel-title">Settings</div>
-  <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
-  <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
+  <div class="settings-panel-title">⚙ Settings</div>
+  <div class="settings-panel-body">
+    <label><input type="checkbox" id="autoReplyCheck"> Auto-reply when agent asks</label>
+    <input type="text" id="autoReplyText" placeholder="Auto-reply text" value="Continue">
+  </div>
 </div>
 
 <div class="messages" id="messages">
@@ -539,7 +553,7 @@ const SESSION_ID = '{{SESSION_ID}}';
             const el = document.createElement('div');
             el.className = 'message';
             if (msg.role === 'system') {
-                el.innerHTML = md(msg.content);
+                el.innerHTML = msg.content.includes('<span') ? msg.content : md(msg.content);
             } else {
                 const h = document.createElement('div'); h.className = 'header';
                 const r = document.createElement('span'); r.className = 'role';
@@ -999,7 +1013,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                     if (parts.length > 0) {
                         tab.messages.push({
                             role: 'system',
-                            content: '📤 Pending delivered: ' + parts.join(' + '),
+                            content: '<span class="hint-badge">📤 Delivered → Agent</span> ' + parts.join(' + '),
                             timestamp: new Date().toISOString(),
                         });
                     }
