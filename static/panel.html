@@ -170,7 +170,8 @@ body{
 <div class="image-previews" id="imagePreviews"></div>
 <div class="input-area">
   <div class="input-row">
-    <button class="attach-btn" id="attachBtn" title="Attach image">📎</button>
+    <button class="attach-btn" id="pasteImgBtn" title="Paste image from clipboard">📋</button>
+    <button class="attach-btn" id="attachBtn" title="Attach image file">📎</button>
     <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
@@ -530,10 +531,11 @@ const SESSION_ID = '{{SESSION_ID}}';
         });
     }
 
-    // Paste image from clipboard
-    document.addEventListener('paste', async (e) => {
+    // Paste image from clipboard (listen on textarea + document)
+    async function handlePaste(e) {
         const items = e.clipboardData?.items;
         if (!items) return;
+        let found = false;
         for (const item of items) {
             if (item.type.startsWith('image/')) {
                 e.preventDefault();
@@ -541,10 +543,52 @@ const SESSION_ID = '{{SESSION_ID}}';
                 if (file) {
                     const b64 = await fileToBase64(file);
                     addImage(b64);
+                    found = true;
                 }
             }
         }
+        return found;
+    }
+    input.addEventListener('paste', handlePaste);
+    document.addEventListener('paste', handlePaste);
+
+    // Drag & drop images onto the input area
+    const inputArea = input.parentElement.parentElement;
+    inputArea.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; });
+    inputArea.addEventListener('drop', async (e) => {
+        e.preventDefault();
+        for (const file of e.dataTransfer.files) {
+            if (file.type.startsWith('image/')) {
+                const b64 = await fileToBase64(file);
+                addImage(b64);
+            }
+        }
     });
+
+    // Fallback: read from clipboard API (for environments where paste events don't carry images)
+    async function pasteFromClipboard() {
+        try {
+            const items = await navigator.clipboard.read();
+            for (const item of items) {
+                for (const type of item.types) {
+                    if (type.startsWith('image/')) {
+                        const blob = await item.getType(type);
+                        const b64 = await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onload = () => resolve(reader.result.split(',')[1]);
+                            reader.readAsDataURL(blob);
+                        });
+                        addImage(b64);
+                    }
+                }
+            }
+        } catch (err) {
+            console.warn('Clipboard read failed:', err);
+        }
+    }
+
+    // Paste from clipboard button
+    document.getElementById('pasteImgBtn').addEventListener('click', pasteFromClipboard);
 
     // File picker
     attachBtn.addEventListener('click', () => fileInput.click());
