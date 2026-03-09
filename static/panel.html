@@ -286,8 +286,15 @@ const SESSION_ID = '{{SESSION_ID}}';
     }
 
     function getOrCreateTab(id, label, model, state) {
-        if (tabs.has(id)) return tabs.get(id);
-        const tab = new TabState(id, label, model, state);
+        if (tabs.has(id)) {
+            const existing = tabs.get(id);
+            if (label) existing.label = label;
+            if (model) existing.model = model;
+            if (state) existing.state = state;
+            return existing;
+        }
+        const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const tab = new TabState(id, label || ('Agent | ' + time), model, state);
         tabs.set(id, tab);
         renderTabBar();
         return tab;
