@@ -22,7 +22,7 @@ import * as os from 'os';
 import * as http from 'http';
 import * as net from 'net';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 

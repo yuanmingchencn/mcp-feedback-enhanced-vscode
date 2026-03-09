@@ -19,7 +19,7 @@ import type {
     ServerInfo,
 } from './types';
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const CONVERSATIONS_DIR = path.join(CONFIG_DIR, 'conversations');

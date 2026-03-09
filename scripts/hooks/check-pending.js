@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 
-const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
+const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');

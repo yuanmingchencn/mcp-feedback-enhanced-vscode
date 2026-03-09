@@ -233,7 +233,7 @@ function deployCursorHooks(extensionPath: string): void {
         }
 
         // Copy hook script to config dir
-        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
+        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-v2', 'hooks');
         const targetHook = path.join(targetDir, 'check-pending.js');
         fs.mkdirSync(targetDir, { recursive: true });
         fs.copyFileSync(sourceHook, targetHook);
@@ -252,7 +252,7 @@ function deployCursorHooks(extensionPath: string): void {
         const hooks = (hooksConfig.hooks || {}) as Record<string, Array<Record<string, unknown>>>;
         const hookPoints = ['sessionStart', 'stop', 'preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'subagentStart'];
         const hookCommand = `node ${targetHook}`;
-        const SOURCE_TAG = 'mcp-feedback-enhanced';
+        const SOURCE_TAG = 'mcp-feedback-v2';
 
         for (const event of hookPoints) {
             if (!hooks[event]) { hooks[event] = []; }
