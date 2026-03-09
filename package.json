@@ -54,7 +54,8 @@
           "type": "webview",
           "id": "mcp-feedback-v2.feedbackPanel",
           "name": "Feedback",
-          "visibility": "visible"
+          "visibility": "visible",
+          "when": "config.mcp-feedback-v2.showInSidebar"
         }
       ],
       "mcp-feedback-v2-bottom": [
@@ -62,9 +63,25 @@
           "type": "webview",
           "id": "mcp-feedback-v2.feedbackPanelBottom",
           "name": "MCP Feedback V2",
-          "visibility": "visible"
+          "visibility": "visible",
+          "when": "config.mcp-feedback-v2.showInBottomPanel"
         }
       ]
+    },
+    "configuration": {
+      "title": "MCP Feedback V2",
+      "properties": {
+        "mcp-feedback-v2.showInSidebar": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show MCP Feedback panel in the left sidebar"
+        },
+        "mcp-feedback-v2.showInBottomPanel": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show MCP Feedback panel in the bottom panel"
+        }
+      }
     },
     "commands": [
       {
