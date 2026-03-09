@@ -484,14 +484,15 @@ export class FeedbackWSServer {
                 const conv = readConversation(conversationId);
                 const deliveredComments = conv ? [...conv.pending_queue] : [];
 
-                if (conv && deliveredComments.length > 0) {
-                    const delivered = deliveredComments.join('\n\n');
+                if (conv) {
+                    if (deliveredComments.length > 0) {
+                        conv.messages.push({
+                            role: 'system',
+                            content: `📤 Pending delivered (${deliveredComments.length}): ${deliveredComments.map(c => `"${c}"`).join(', ')}`,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
                     conv.pending_queue = [];
-                    conv.messages.push({
-                        role: 'system',
-                        content: `Pending delivered to agent:\n\n> ${delivered.split('\n').join('\n> ')}`,
-                        timestamp: new Date().toISOString(),
-                    });
                     writeConversation(conv);
                 }
 

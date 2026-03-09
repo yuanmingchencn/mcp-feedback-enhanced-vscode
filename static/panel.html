@@ -820,10 +820,9 @@ const SESSION_ID = '{{SESSION_ID}}';
                 if (tab) {
                     const comments = msg.comments || [];
                     if (comments.length > 0) {
-                        const delivered = comments.join('\n\n');
                         tab.messages.push({
                             role: 'system',
-                            content: 'Pending delivered to agent:\n\n> ' + delivered.split('\n').join('\n> '),
+                            content: '📤 Pending delivered (' + comments.length + '): ' + comments.map(c => '"' + c + '"').join(', '),
                             timestamp: new Date().toISOString(),
                         });
                     }
