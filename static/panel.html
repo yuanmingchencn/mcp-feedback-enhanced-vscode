@@ -226,6 +226,7 @@ const SESSION_ID = '{{SESSION_ID}}';
             this.pendingSessionId = null;
             this.autoReply = false;
             this.autoReplyText = 'Continue';
+            this.inputDraft = '';
         }
     }
 
@@ -241,6 +242,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                     messages: t.messages.slice(-100),
                     pendingQueue: t.pendingQueue,
                     autoReply: t.autoReply, autoReplyText: t.autoReplyText,
+                    inputDraft: t.inputDraft || '',
                 })),
             }));
         } catch {}
@@ -256,9 +258,14 @@ const SESSION_ID = '{{SESSION_ID}}';
                 tab.pendingQueue = t.pendingQueue || [];
                 tab.autoReply = t.autoReply || false;
                 tab.autoReplyText = t.autoReplyText || 'Continue';
+                tab.inputDraft = t.inputDraft || '';
                 tabs.set(t.id, tab);
             }
-            if (d.activeTabId && tabs.has(d.activeTabId)) activeTabId = d.activeTabId;
+            if (d.activeTabId && tabs.has(d.activeTabId)) {
+                activeTabId = d.activeTabId;
+                const tab = tabs.get(activeTabId);
+                if (tab) input.value = tab.inputDraft || '';
+            }
         } catch {}
     }
 
@@ -290,7 +297,15 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     function switchTab(id) {
         if (!tabs.has(id)) return;
+        // Save draft of current tab before switching
+        if (activeTabId) {
+            const prev = tabs.get(activeTabId);
+            if (prev) prev.inputDraft = input.value;
+        }
         activeTabId = id;
+        // Restore draft of new tab
+        const tab = tabs.get(id);
+        input.value = tab ? (tab.inputDraft || '') : '';
         renderTabBar(); renderMessages(); renderPending(); updateSendButton();
         saveState();
     }
@@ -463,6 +478,7 @@ const SESSION_ID = '{{SESSION_ID}}';
             const msg = { role: 'user', content: text, timestamp: new Date().toISOString(), images };
             tab.messages.push(msg);
             tab.pendingSessionId = null; tab.state = 'running';
+            tab.inputDraft = '';
             input.value = '';
             clearImages();
             renderMessages(); renderTabBar(); updateSendButton(); saveState();
@@ -543,7 +559,13 @@ const SESSION_ID = '{{SESSION_ID}}';
     });
 
     sendBtn.addEventListener('click', smartSend);
-    input.addEventListener('input', updateSendButton);
+    input.addEventListener('input', () => {
+        updateSendButton();
+        if (activeTabId) {
+            const tab = tabs.get(activeTabId);
+            if (tab) tab.inputDraft = input.value;
+        }
+    });
     input.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); smartSend(); }
     });
