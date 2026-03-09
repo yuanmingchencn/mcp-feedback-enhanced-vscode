@@ -24,7 +24,13 @@ const CONVMAP_DIR = path.join(CONFIG_DIR, 'convmap');
 const STOP_LOOP_LIMIT = 3;
 const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
 
-const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info'];
+const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-v2', 'mcp-feedback-enhanced'];
+
+function isAllowlisted(toolName) {
+    if (!toolName) return false;
+    const lower = toolName.toLowerCase();
+    return ALLOWLIST_TOOLS.some(t => lower.includes(t.toLowerCase()));
+}
 
 const USAGE_RULES = [
     '[MCP Feedback Enhanced] USAGE RULES:',
@@ -250,7 +256,7 @@ function main() {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
-        if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(toolName)) {
+        if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(toolName)) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
@@ -285,7 +291,7 @@ function main() {
         const mcpTool = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
-        if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(mcpTool)) {
+        if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(mcpTool)) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
