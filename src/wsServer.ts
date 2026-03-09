@@ -277,7 +277,10 @@ export class FeedbackWSServer {
 
     private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest): void {
         const sessionId = req.session_id || this._generateId();
-        const conversationId = req.conversation_id || '';
+        let conversationId = req.conversation_id || '';
+
+        // Resolve custom conversation_id to Cursor UUID if needed
+        conversationId = this._resolveConversationId(conversationId);
 
         if (conversationId) {
             this._ensureConversation(conversationId, sessionId, req.summary);
@@ -624,6 +627,42 @@ export class FeedbackWSServer {
                 conversation_id: conversationId,
             });
         }
+    }
+
+    // ─── ID Resolution ─────────────────────────────────────
+
+    /**
+     * If the provided conversation_id doesn't match a known session-registered
+     * conversation (i.e., LLM passed a custom ID instead of the Cursor UUID),
+     * try to find the correct Cursor UUID by matching recent conversations.
+     */
+    private _resolveConversationId(providedId: string): string {
+        if (!providedId) return providedId;
+
+        // If there's already a conversation with this ID, use it directly
+        const existing = readConversation(providedId);
+        if (existing) return providedId;
+
+        // No match — LLM likely passed a custom ID. Find most recent active
+        // conversation for this workspace that was registered by sessionStart.
+        const myRoots = new Set(this.workspaces.map(w => w.replace(/\/+$/, '')));
+        const candidates = listConversations().filter(c => {
+            if (c.server_pid !== process.pid) return false;
+            if (c.state === 'archived') return false;
+            const roots = (c.workspace_roots || []).map(r => r.replace(/\/+$/, ''));
+            return roots.some(r => myRoots.has(r));
+        });
+
+        if (candidates.length > 0) {
+            // Sort by started_at descending, pick most recent
+            candidates.sort((a, b) => (b.started_at || 0) - (a.started_at || 0));
+            const resolved = candidates[0].conversation_id;
+            console.log(`[MCP Feedback] Resolved conversation_id "${providedId}" → "${resolved}"`);
+            return resolved;
+        }
+
+        // No candidates, use provided ID as-is
+        return providedId;
     }
 
     // ─── Conversation Helpers ─────────────────────────────

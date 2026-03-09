@@ -19,7 +19,6 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
-const CONVMAP_DIR = path.join(CONFIG_DIR, 'convmap');
 
 const STOP_LOOP_LIMIT = 3;
 const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
@@ -66,14 +65,6 @@ function getPending(conversationId, workspaceRoots) {
         if (direct) return direct;
     }
 
-    // Check convmap: Cursor UUID → custom conversation_id
-    if (conversationId) {
-        const mapping = readJSON(path.join(CONVMAP_DIR, `${conversationId}.json`));
-        if (mapping && mapping.conversation_id) {
-            return readJSON(path.join(PENDING_DIR, `${mapping.conversation_id}.json`));
-        }
-    }
-
     // Fallback: scan pending files matching workspace/server
     return findAnyPending(workspaceRoots || []);
 }
@@ -100,18 +91,11 @@ function findAnyPending(workspaceRoots) {
 
 function consumePending(conversationId) {
     if (!conversationId) return;
-    // Direct
+    // Direct match
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+    try { if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); return; } } catch {}
 
-    // Via convmap
-    const mapping = readJSON(path.join(CONVMAP_DIR, `${conversationId}.json`));
-    if (mapping && mapping.conversation_id) {
-        const mapped = path.join(PENDING_DIR, `${mapping.conversation_id}.json`);
-        try { if (fs.existsSync(mapped)) fs.unlinkSync(mapped); } catch {}
-    }
-
-    // Scan: remove any pending file that was matched
+    // Fallback: remove first pending file with content
     try {
         if (!fs.existsSync(PENDING_DIR)) return;
         const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
