@@ -19,6 +19,7 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-v2');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
+const CONVMAP_DIR = path.join(CONFIG_DIR, 'convmap');
 
 const STOP_LOOP_LIMIT = 3;
 const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
@@ -52,15 +53,70 @@ function fmtAgent(text) {
 
 // ─── Pending ──────────────────────────────────────────────
 
-function getPending(conversationId) {
-    if (!conversationId) return null;
-    return readJSON(path.join(PENDING_DIR, `${conversationId}.json`));
+function getPending(conversationId, workspaceRoots) {
+    // Direct match first
+    if (conversationId) {
+        const direct = readJSON(path.join(PENDING_DIR, `${conversationId}.json`));
+        if (direct) return direct;
+    }
+
+    // Check convmap: Cursor UUID → custom conversation_id
+    if (conversationId) {
+        const mapping = readJSON(path.join(CONVMAP_DIR, `${conversationId}.json`));
+        if (mapping && mapping.conversation_id) {
+            return readJSON(path.join(PENDING_DIR, `${mapping.conversation_id}.json`));
+        }
+    }
+
+    // Fallback: scan pending files matching workspace/server
+    return findAnyPending(workspaceRoots || []);
+}
+
+function findAnyPending(workspaceRoots) {
+    try {
+        if (!fs.existsSync(PENDING_DIR)) return null;
+        const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
+        // Find matching server first
+        const serverPid = findServerPid(workspaceRoots);
+        for (const f of files) {
+            const p = readJSON(path.join(PENDING_DIR, f));
+            if (!p || !p.comments || p.comments.length === 0) continue;
+            if (serverPid && p.server_pid === serverPid) return p;
+        }
+        // Fallback: any pending file
+        for (const f of files) {
+            const p = readJSON(path.join(PENDING_DIR, f));
+            if (p && p.comments && p.comments.length > 0) return p;
+        }
+    } catch {}
+    return null;
 }
 
 function consumePending(conversationId) {
     if (!conversationId) return;
+    // Direct
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
     try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+
+    // Via convmap
+    const mapping = readJSON(path.join(CONVMAP_DIR, `${conversationId}.json`));
+    if (mapping && mapping.conversation_id) {
+        const mapped = path.join(PENDING_DIR, `${mapping.conversation_id}.json`);
+        try { if (fs.existsSync(mapped)) fs.unlinkSync(mapped); } catch {}
+    }
+
+    // Scan: remove any pending file that was matched
+    try {
+        if (!fs.existsSync(PENDING_DIR)) return;
+        const files = fs.readdirSync(PENDING_DIR).filter(f => f.endsWith('.json'));
+        for (const f of files) {
+            const p = readJSON(path.join(PENDING_DIR, f));
+            if (p && p.comments && p.comments.length > 0) {
+                try { fs.unlinkSync(path.join(PENDING_DIR, f)); } catch {}
+                break;
+            }
+        }
+    } catch {}
 }
 
 // ─── Server Matching ──────────────────────────────────────
@@ -117,6 +173,15 @@ function main() {
     const loopCount = input.loop_count || 0;
     const workspaceRoots = input.workspace_roots || [];
 
+    // Debug: log hook invocations
+    try {
+        const logDir = path.join(CONFIG_DIR, 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        fs.appendFileSync(path.join(logDir, 'hooks.log'),
+            `[${new Date().toISOString()}] ${hook} conv=${conversationId} pending=${fs.existsSync(path.join(PENDING_DIR, conversationId + '.json'))}\n`
+        );
+    } catch {}
+
     // ─── sessionStart ─────────────────────────────────
     if (hook === 'sessionStart') {
         const serverPid = findServerPid(workspaceRoots);
@@ -147,7 +212,7 @@ function main() {
         }
 
         // Check for pending
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
@@ -169,7 +234,7 @@ function main() {
             return;
         }
 
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
@@ -183,7 +248,7 @@ function main() {
     // ─── preToolUse ───────────────────────────────────
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
 
         if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(toolName)) {
             const combined = pending.comments.join('\n\n');
@@ -201,7 +266,7 @@ function main() {
 
     // ─── beforeShellExecution ─────────────────────────
     if (hook === 'beforeShellExecution') {
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
@@ -218,7 +283,7 @@ function main() {
     // ─── beforeMCPExecution ──────────────────────────
     if (hook === 'beforeMCPExecution') {
         const mcpTool = input.tool_name || '';
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
 
         if (pending && pending.comments && pending.comments.length > 0 && !ALLOWLIST_TOOLS.includes(mcpTool)) {
             const combined = pending.comments.join('\n\n');
@@ -235,7 +300,7 @@ function main() {
 
     // ─── subagentStart ───────────────────────────────
     if (hook === 'subagentStart') {
-        const pending = getPending(conversationId);
+        const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
