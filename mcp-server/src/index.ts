@@ -315,7 +315,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'interactive_feedback') {
         const parsed = z.object({
             summary: z.string(),
-            conversation_id: z.string().optional(),
+            conversation_id: z.string(),
             project_directory: z.string().optional(),
         }).parse(args);
 

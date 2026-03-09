@@ -271,7 +271,7 @@ export class FeedbackWSServer {
         const conversationId = req.conversation_id || '';
 
         if (conversationId) {
-            this._ensureConversation(conversationId, req.summary);
+            this._ensureConversation(conversationId, sessionId, req.summary);
         }
 
         // Store the pending request for resolution
@@ -336,10 +336,10 @@ export class FeedbackWSServer {
                 images: res.images,
             });
 
-            // Update conversation state
             const conv = readConversation(convId);
             if (conv) {
                 conv.state = 'running';
+                conv.active_session_id = null;
                 writeConversation(conv);
             }
         }
@@ -503,6 +503,7 @@ export class FeedbackWSServer {
                 pending_queue: [],
                 server_pid: process.pid,
                 is_background: false,
+                active_session_id: null,
             };
         } else {
             conv.state = conv.state === 'archived' ? 'idle' : conv.state;
@@ -524,6 +525,7 @@ export class FeedbackWSServer {
         if (conv && conv.server_pid === process.pid) {
             conv.state = 'ended';
             conv.ended_at = Date.now();
+            conv.active_session_id = null;
             writeConversation(conv);
 
             this._broadcastToWebviews({
@@ -535,7 +537,7 @@ export class FeedbackWSServer {
 
     // ─── Conversation Helpers ─────────────────────────────
 
-    private _ensureConversation(conversationId: string, summary?: string): void {
+    private _ensureConversation(conversationId: string, sessionId: string, summary?: string): void {
         let conv = readConversation(conversationId);
         if (!conv) {
             conv = {
@@ -550,10 +552,12 @@ export class FeedbackWSServer {
                 pending_queue: [],
                 server_pid: process.pid,
                 is_background: false,
+                active_session_id: null,
             };
         }
 
         conv.state = 'waiting';
+        conv.active_session_id = sessionId;
 
         if (summary) {
             conv.messages.push({
@@ -594,6 +598,7 @@ export class FeedbackWSServer {
                 message_count: c.messages.length,
                 pending_count: c.pending_queue.length,
                 is_background: c.is_background,
+                active_session_id: c.active_session_id || null,
             }));
         this._send(ws, { type: 'conversations_list', conversations });
     }

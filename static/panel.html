@@ -556,7 +556,10 @@ const SESSION_ID = '{{SESSION_ID}}';
             }
 
             case 'conversations_list':
-                for (const c of (msg.conversations || [])) getOrCreateTab(c.conversation_id, c.label, c.model, c.state);
+                for (const c of (msg.conversations || [])) {
+                    const tab = getOrCreateTab(c.conversation_id, c.label, c.model, c.state);
+                    if (c.active_session_id) tab.pendingSessionId = c.active_session_id;
+                }
                 if (!activeTabId && tabs.size > 0) switchTab(Array.from(tabs.keys())[tabs.size - 1]);
                 renderTabBar();
                 break;

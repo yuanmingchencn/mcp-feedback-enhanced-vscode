@@ -19,6 +19,7 @@ export interface ConversationData {
     pending_queue: string[];
     server_pid: number | null;
     is_background: boolean;
+    active_session_id: string | null;
 }
 
 export interface ConversationMessage {
