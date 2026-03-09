@@ -115,7 +115,7 @@
   "scripts": {
     "vscode:prepublish": "cd mcp-server && npm run build && cd .. && node scripts/generate-webview.js --prod && node scripts/validate-build.js && npm run esbuild-base -- --minify && npm run verify",
     "compile": "cd mcp-server && npm run build && cd .. && tsc -p ./ && node scripts/generate-webview.js && node scripts/validate-build.js && npm run esbuild && npm run verify",
-    "verify": "node -e \"const h=require('fs').readFileSync('out/webview/panel.html','utf8');const e=require('fs').readFileSync('out/extension.js','utf8');const checks=[];if(!h.includes('{{SERVER_URL}}'))checks.push('Missing SERVER_URL placeholder');if(!e.includes('retainContextWhenHidden:!1')&&!e.includes('retainContextWhenHidden: false'))checks.push('retainContextWhenHidden should be false');if(!e.includes('_loadWebviewHtml'))checks.push('Missing _loadWebviewHtml');if(checks.length){console.error('ERRORS:',checks.join(', '));process.exit(1)}console.log('Verify OK')\"",
+    "verify": "node -e \"const h=require('fs').readFileSync('out/webview/panel.html','utf8');const e=require('fs').readFileSync('out/extension.js','utf8');const checks=[];if(!h.includes('{{SERVER_URL}}'))checks.push('Missing SERVER_URL placeholder');if(!e.includes('retainContextWhenHidden:!1')&&!e.includes('retainContextWhenHidden: false'))checks.push('retainContextWhenHidden should be false');if(!e.includes('panel.html'))checks.push('Missing panel.html reference');if(checks.length){console.error('ERRORS:',checks.join(', '));process.exit(1)}console.log('Verify OK')\"",
     "dev": "node scripts/watch-reload.js",
     "rollback:list": "node scripts/rollback.js list",
     "rollback:save": "node scripts/rollback.js save",
