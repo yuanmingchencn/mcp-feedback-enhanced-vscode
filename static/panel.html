@@ -562,6 +562,9 @@ const SESSION_ID = '{{SESSION_ID}}';
                 }
                 if (!activeTabId && tabs.size > 0) switchTab(Array.from(tabs.keys())[tabs.size - 1]);
                 renderTabBar();
+                if (activeTabId && ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ type: 'load_conversation', conversation_id: activeTabId }));
+                }
                 break;
 
             case 'conversation_loaded': {
