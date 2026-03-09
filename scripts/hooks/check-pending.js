@@ -53,7 +53,11 @@ function readJSON(filePath) {
 }
 
 function fmtAgent(text) {
-    return `[MCP Feedback Enhanced - User Message]\n${text}\n\nRemember: call interactive_feedback before ending.`;
+    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + text + '"\n\nIf this feedback asks a question, seeks discussion, or needs confirmation, call interactive_feedback to respond. If it is guidance or instructions, adjust your plan and continue working.';
+}
+
+function fmtUser(text) {
+    return 'Pending comment delivered: "' + text + '"';
 }
 
 // ─── Pending ──────────────────────────────────────────────
@@ -236,25 +240,26 @@ function main() {
     }
 
     // ─── preToolUse ───────────────────────────────────
+    // Uses decision/reason. Never consumes pending (Cursor ignores deny for Shell/MCP).
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
         if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(toolName)) {
             const combined = pending.comments.join('\n\n');
-            consumePending(conversationId);
             output({
-                permission: 'deny',
-                agent_message: fmtAgent(combined),
+                decision: 'deny',
+                reason: fmtAgent(combined),
             });
             return;
         }
 
-        output({});
+        output({ decision: 'allow' });
         return;
     }
 
     // ─── beforeShellExecution ─────────────────────────
+    // Uses permission + user_message + agent_message. Consumes pending.
     if (hook === 'beforeShellExecution') {
         const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
@@ -262,6 +267,7 @@ function main() {
             consumePending(conversationId);
             output({
                 permission: 'deny',
+                user_message: fmtUser(combined),
                 agent_message: fmtAgent(combined),
             });
             return;
@@ -271,17 +277,27 @@ function main() {
     }
 
     // ─── beforeMCPExecution ──────────────────────────
+    // Uses permission. Allowlisted tools pass through but still get pending injected.
     if (hook === 'beforeMCPExecution') {
         const mcpTool = input.tool_name || '';
         const pending = getPending(conversationId, workspaceRoots);
 
-        if (pending && pending.comments && pending.comments.length > 0 && !isAllowlisted(mcpTool)) {
+        if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
-            consumePending(conversationId);
-            output({
-                permission: 'deny',
-                agent_message: fmtAgent(combined),
-            });
+            if (isAllowlisted(mcpTool)) {
+                consumePending(conversationId);
+                output({
+                    permission: 'allow',
+                    agent_message: fmtAgent(combined),
+                });
+            } else {
+                consumePending(conversationId);
+                output({
+                    permission: 'deny',
+                    user_message: fmtUser(combined),
+                    agent_message: fmtAgent(combined),
+                });
+            }
             return;
         }
         output({});
@@ -289,18 +305,19 @@ function main() {
     }
 
     // ─── subagentStart ───────────────────────────────
+    // Uses decision/reason. Consumes pending.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId, workspaceRoots);
         if (pending && pending.comments && pending.comments.length > 0) {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                permission: 'deny',
-                user_message: fmtAgent(combined),
+                decision: 'deny',
+                reason: fmtAgent(combined),
             });
             return;
         }
-        output({});
+        output({ decision: 'allow' });
         return;
     }
 
