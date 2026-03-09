@@ -96,7 +96,7 @@ body{
 /* Input */
 .input-area{padding:6px 10px 8px;border-top:1px solid var(--border)}
 .input-row{display:flex;gap:6px;align-items:flex-end}
-.input-row textarea{flex:1;min-height:36px;max-height:120px;resize:vertical;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.4}
+.input-row textarea{flex:1;min-height:76px;max-height:200px;resize:vertical;background:var(--input-bg);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:8px 10px;font-family:inherit;font-size:13px;line-height:1.4}
 .input-row textarea:focus{outline:none;border-color:var(--btn-bg)}
 .input-row textarea::placeholder{color:var(--fg-dim)}
 .send-btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px;font-weight:500;white-space:nowrap}
@@ -152,7 +152,7 @@ body{
 
 <div class="input-area">
   <div class="input-row">
-    <textarea id="input" placeholder="Type your feedback..." rows="1"></textarea>
+    <textarea id="input" placeholder="Type your feedback..." rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
 </div>
