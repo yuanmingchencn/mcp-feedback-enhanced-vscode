@@ -54,11 +54,16 @@ interface ConnectedClient {
 }
 
 // Pending feedback requests awaiting user response
+interface FeedbackResult {
+    feedback: string;
+    images?: string[];
+}
+
 interface PendingFeedbackRequest {
     sessionId: string;
     conversationId: string;
     mcpClient: WebSocket;
-    resolve: (response: string) => void;
+    resolve: (response: FeedbackResult) => void;
     reject: (error: Error) => void;
     timestamp: number;
 }
@@ -279,7 +284,7 @@ export class FeedbackWSServer {
         }
 
         // Store the pending request for resolution
-        const promise = new Promise<string>((resolve, reject) => {
+        const promise = new Promise<FeedbackResult>((resolve, reject) => {
             this.pendingRequests.set(sessionId, {
                 sessionId,
                 conversationId,
@@ -306,12 +311,13 @@ export class FeedbackWSServer {
         }
 
         // Wait for response and send back to MCP
-        promise.then((feedback) => {
+        promise.then((result) => {
             this._send(mcpWs, {
                 type: 'feedback_result',
                 session_id: sessionId,
                 success: true,
-                feedback,
+                feedback: result.feedback,
+                images: result.images,
             });
         }).catch((err) => {
             this._send(mcpWs, {
@@ -356,7 +362,7 @@ export class FeedbackWSServer {
         const feedbackWithReminder = res.feedback +
             '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
 
-        pending.resolve(feedbackWithReminder);
+        pending.resolve({ feedback: feedbackWithReminder, images: res.images });
         this.pendingRequests.delete(res.session_id);
 
         this._broadcastToWebviews({
@@ -371,7 +377,7 @@ export class FeedbackWSServer {
     private _handleDismiss(sessionId: string): void {
         const pending = this.pendingRequests.get(sessionId);
         if (pending) {
-            pending.resolve('[Dismissed by user]');
+            pending.resolve({ feedback: '[Dismissed by user]' });
             this.pendingRequests.delete(sessionId);
 
             this._broadcastToWebviews({
@@ -453,7 +459,7 @@ export class FeedbackWSServer {
         // Cancel any pending feedback request for this conversation
         for (const [sid, req] of this.pendingRequests) {
             if (req.conversationId === conversationId) {
-                req.resolve('[Tab closed by user]');
+                req.resolve({ feedback: '[Tab closed by user]' });
                 this.pendingRequests.delete(sid);
             }
         }
