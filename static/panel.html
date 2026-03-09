@@ -62,12 +62,16 @@ body{
 .status-dot.disconnected{background:#e74c3c}
 
 /* Messages */
-.messages{flex:1;overflow-y:auto;padding:8px 10px}
-.message{margin-bottom:10px;padding:10px 12px;border-radius:8px;line-height:1.5}
-.message.ai{background:color-mix(in srgb,var(--btn-bg) 12%,var(--bg))}
-.message.user{background:color-mix(in srgb,var(--success) 10%,var(--bg))}
-.message.system{background:transparent;text-align:center;font-size:11px;color:var(--fg-dim);padding:4px}
-.message .header{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-dim);margin-bottom:6px}
+.messages{flex:1;overflow-y:auto;padding:8px 10px;display:flex;flex-direction:column}
+.msg-row{display:flex;margin-bottom:8px}
+.msg-row.ai{justify-content:flex-start}
+.msg-row.user{justify-content:flex-end}
+.msg-row.system{justify-content:center}
+.message{max-width:85%;padding:8px 12px;border-radius:12px;line-height:1.5;position:relative}
+.msg-row.ai .message{background:color-mix(in srgb,var(--btn-bg) 15%,var(--bg));border-top-left-radius:4px}
+.msg-row.user .message{background:color-mix(in srgb,var(--success) 15%,var(--bg));border-top-right-radius:4px}
+.msg-row.system .message{background:transparent;font-size:11px;color:var(--fg-dim);padding:4px 8px;max-width:100%}
+.message .header{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--fg-dim);margin-bottom:4px}
 .message .header .role{font-weight:600;color:var(--fg)}
 .message .content{word-break:break-word}
 .message .content code{background:var(--input-bg);padding:1px 4px;border-radius:3px;font-size:12px}
@@ -300,8 +304,10 @@ const SESSION_ID = '{{SESSION_ID}}';
         emptyState.style.display = 'none';
 
         for (const msg of tab.messages) {
+            const row = document.createElement('div');
+            row.className = 'msg-row ' + msg.role;
             const el = document.createElement('div');
-            el.className = 'message ' + msg.role;
+            el.className = 'message';
             if (msg.role === 'system') {
                 el.innerHTML = md(msg.content);
             } else {
@@ -319,7 +325,8 @@ const SESSION_ID = '{{SESSION_ID}}';
                 c.innerHTML = md(msg.content);
                 el.appendChild(c);
             }
-            messagesEl.appendChild(el);
+            row.appendChild(el);
+            messagesEl.appendChild(row);
         }
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
