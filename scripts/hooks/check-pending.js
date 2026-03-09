@@ -189,8 +189,8 @@ function main() {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                decision: 'deny',
-                reason: fmtAgent(combined),
+                permission: 'deny',
+                agent_message: fmtAgent(combined),
             });
             return;
         }
@@ -206,7 +206,7 @@ function main() {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                decision: 'deny',
+                permission: 'deny',
                 agent_message: fmtAgent(combined),
             });
             return;
@@ -224,7 +224,7 @@ function main() {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                decision: 'deny',
+                permission: 'deny',
                 agent_message: fmtAgent(combined),
             });
             return;
@@ -240,8 +240,8 @@ function main() {
             const combined = pending.comments.join('\n\n');
             consumePending(conversationId);
             output({
-                decision: 'deny',
-                agent_message: fmtAgent(combined),
+                permission: 'deny',
+                user_message: fmtAgent(combined),
             });
             return;
         }
