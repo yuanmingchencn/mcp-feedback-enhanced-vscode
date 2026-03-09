@@ -287,15 +287,6 @@ function main() {
     }
 
     if (hook === 'beforeMCPExecution') {
-        const mcpTool = input.tool_name || '';
-
-        // Allowlisted tools (like interactive_feedback) pass through cleanly.
-        // Pending is delivered via the webview auto-send flow, not here.
-        if (isAllowlisted(mcpTool)) {
-            output({});
-            return;
-        }
-
         const pending = getPending(conversationId, workspaceRoots);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
