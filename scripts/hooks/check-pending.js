@@ -167,12 +167,12 @@ function main() {
     const loopCount = input.loop_count || 0;
     const workspaceRoots = input.workspace_roots || [];
 
-    // Debug: log hook invocations
+    // Debug: log all hook invocations with full input
     try {
         const logDir = path.join(CONFIG_DIR, 'logs');
         fs.mkdirSync(logDir, { recursive: true });
         fs.appendFileSync(path.join(logDir, 'hooks.log'),
-            `[${new Date().toISOString()}] ${hook} conv=${conversationId} pending=${fs.existsSync(path.join(PENDING_DIR, conversationId + '.json'))}\n`
+            `[${new Date().toISOString()}] ${hook} input=${JSON.stringify(input)}\n`
         );
     } catch {}
 

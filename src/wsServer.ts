@@ -581,7 +581,9 @@ export class FeedbackWSServer {
         // Create or update conversation data
         let conv = readConversation(session.conversation_id);
         if (!conv) {
-            const modelShort = session.model?.split('-')[0] || 'Agent';
+            const modelShort = session.model
+                ? session.model.replace(/-high-thinking$/, '').replace(/-\d{8}$/, '')
+                : 'Agent';
             const time = new Date(session.started_at).toLocaleTimeString('en-US', {
                 hour: '2-digit', minute: '2-digit', hour12: false,
             });
