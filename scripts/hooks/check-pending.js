@@ -42,6 +42,7 @@ const USAGE_RULES = [
 // ─── Helpers ──────────────────────────────────────────────
 
 function output(obj) {
+    log(`  → output: ${JSON.stringify(obj).slice(0, 300)}`);
     process.stdout.write(JSON.stringify(obj));
 }
 
@@ -74,43 +75,48 @@ function hasPendingContent(p) {
 function consumePending(conversationId) {
     if (!conversationId) return;
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            log(`  consumed pending: ${conversationId}`);
+        }
+    } catch (e) {
+        log(`  consumePending error: ${e.message}`);
+    }
 }
 
 // ─── Server Matching ──────────────────────────────────────
 
 function findServerPid(workspaceRoots) {
     try {
-        if (!fs.existsSync(SERVERS_DIR)) return null;
+        if (!fs.existsSync(SERVERS_DIR)) { log('  findServerPid: no servers dir'); return null; }
         const files = fs.readdirSync(SERVERS_DIR).filter(f => f.endsWith('.json'));
         const servers = [];
 
         for (const f of files) {
             const s = readJSON(path.join(SERVERS_DIR, f));
             if (!s || !s.pid) continue;
-            // Check if process is alive
             try { process.kill(s.pid, 0); } catch { continue; }
             servers.push(s);
         }
 
-        if (servers.length === 0) return null;
-        if (servers.length === 1) return servers[0].pid;
+        if (servers.length === 0) { log('  findServerPid: no alive servers'); return null; }
+        if (servers.length === 1) { log(`  findServerPid: single server pid=${servers[0].pid}`); return servers[0].pid; }
 
-        // Match by workspace
         const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
         for (const s of servers) {
             const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
-            if (roots.some(r => sWs.includes(r))) return s.pid;
+            if (roots.some(r => sWs.includes(r))) { log(`  findServerPid: workspace match pid=${s.pid}`); return s.pid; }
         }
 
-        // Match by CURSOR_TRACE_ID
         const traceId = process.env.CURSOR_TRACE_ID || '';
         if (traceId) {
             for (const s of servers) {
-                if (s.cursorTraceId === traceId) return s.pid;
+                if (s.cursorTraceId === traceId) { log(`  findServerPid: traceId match pid=${s.pid}`); return s.pid; }
             }
         }
 
+        log(`  findServerPid: fallback to first pid=${servers[0].pid}`);
         return servers[0].pid;
     } catch { return null; }
 }
