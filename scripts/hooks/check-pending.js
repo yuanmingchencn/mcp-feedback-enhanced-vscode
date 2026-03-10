@@ -103,17 +103,19 @@ function findServerPid(workspaceRoots) {
         if (servers.length === 0) { log('  findServerPid: no alive servers'); return null; }
         if (servers.length === 1) { log(`  findServerPid: single server pid=${servers[0].pid}`); return servers[0].pid; }
 
-        const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
-        for (const s of servers) {
-            const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
-            if (roots.some(r => sWs.includes(r))) { log(`  findServerPid: workspace match pid=${s.pid}`); return s.pid; }
-        }
-
+        // Priority 1: CURSOR_TRACE_ID uniquely identifies the Cursor window
         const traceId = process.env.CURSOR_TRACE_ID || '';
         if (traceId) {
             for (const s of servers) {
                 if (s.cursorTraceId === traceId) { log(`  findServerPid: traceId match pid=${s.pid}`); return s.pid; }
             }
+        }
+
+        // Priority 2: workspace match (only when traceId unavailable or unmatched)
+        const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
+        for (const s of servers) {
+            const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
+            if (roots.some(r => sWs.includes(r))) { log(`  findServerPid: workspace match pid=${s.pid}`); return s.pid; }
         }
 
         log(`  findServerPid: fallback to first pid=${servers[0].pid}`);

@@ -6,8 +6,8 @@
  * - interactive_feedback: Request feedback from user, routed by conversation_id
  * - get_system_info: Return system information
  *
- * Routing: conversation_id → session file → server file → port → WebSocket
- * Fallback: CURSOR_TRACE_ID → server file → port
+ * Routing: CURSOR_TRACE_ID → server file → port → WebSocket
+ * Fallback: conversation_id → session file → server file → port
  * Last resort: browser fallback
  */
 
@@ -72,23 +72,23 @@ function isPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 // ─── Extension Discovery ─────────────────────────────────
 
 async function findExtensionServer(conversationId?: string): Promise<ServerData | null> {
-    // Strategy 1: conversation_id → session → server
-    if (conversationId) {
-        const session = readJSON<SessionData>(path.join(SESSIONS_DIR, `${conversationId}.json`));
-        if (session?.server_pid) {
-            const server = readJSON<ServerData>(path.join(SERVERS_DIR, `${session.server_pid}.json`));
-            if (server && await isPortOpen(server.port)) {
-                return server;
-            }
-        }
-    }
-
-    // Strategy 2: CURSOR_TRACE_ID → server
+    // Strategy 1: CURSOR_TRACE_ID → server (most reliable for multi-window)
     const traceId = process.env.CURSOR_TRACE_ID || '';
     if (traceId) {
         for (const f of listJSONFiles(SERVERS_DIR)) {
             const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
             if (server?.cursorTraceId === traceId && await isPortOpen(server.port)) {
+                return server;
+            }
+        }
+    }
+
+    // Strategy 2: conversation_id → session → server
+    if (conversationId) {
+        const session = readJSON<SessionData>(path.join(SESSIONS_DIR, `${conversationId}.json`));
+        if (session?.server_pid) {
+            const server = readJSON<ServerData>(path.join(SERVERS_DIR, `${session.server_pid}.json`));
+            if (server && await isPortOpen(server.port)) {
                 return server;
             }
         }
