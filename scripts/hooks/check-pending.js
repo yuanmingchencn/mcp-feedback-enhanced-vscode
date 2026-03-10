@@ -165,7 +165,6 @@ function main() {
         log(`sessionStart: conv=${conversationId} serverPid=${serverPid} ws=${JSON.stringify(workspaceRoots)}`);
         const envOutput = serverPid ? { MCP_FEEDBACK_SERVER_PID: String(serverPid) } : {};
 
-        // Register session only if server is already running
         if (conversationId && serverPid) {
             try {
                 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -179,7 +178,12 @@ function main() {
                         started_at: Date.now(),
                     })
                 );
-            } catch {}
+                log(`  session written: ${conversationId}.json`);
+            } catch (e) {
+                log(`  session write error: ${e.message}`);
+            }
+        } else {
+            log(`  session NOT written: conv=${conversationId || '(empty)'} pid=${serverPid || '(none)'}`);
         }
 
         // Build additional_context with conversation_id + USAGE RULES
@@ -212,11 +216,13 @@ function main() {
     // ─── stop ─────────────────────────────────────────
     if (hook === 'stop') {
         if (loopCount >= STOP_LOOP_LIMIT) {
+            log(`  stop: loop limit reached (${loopCount}), noop`);
             output({});
             return;
         }
 
         const pending = getPending(conversationId);
+        log(`  stop: pending=${hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -233,6 +239,7 @@ function main() {
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId);
+        log(`  preToolUse: tool=${toolName} pending=${hasPendingContent(pending)} allowlisted=${isAllowlisted(toolName)}`);
 
         if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
@@ -253,6 +260,7 @@ function main() {
     // Uses permission + user_message + agent_message. Consumes pending.
     if (hook === 'beforeShellExecution') {
         const pending = getPending(conversationId);
+        log(`  beforeShell: pending=${hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -268,7 +276,9 @@ function main() {
     }
 
     if (hook === 'beforeMCPExecution') {
+        const mcpTool = input.tool_name || input.mcp_tool_name || '';
         const pending = getPending(conversationId);
+        log(`  beforeMCP: tool=${mcpTool} pending=${hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -287,6 +297,7 @@ function main() {
     // Uses permission/user_message per official docs. Consumes pending.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId);
+        log(`  subagentStart: pending=${hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);

@@ -129,12 +129,12 @@ body{
 }
 .hint-badge{
   display:inline-block;
-  background:rgba(245,158,11,0.1);
-  border:1px solid rgba(245,158,11,0.25);
-  color:#fbbf24;font-size:10px;font-weight:500;
-  padding:2px 8px;border-radius:10px;
-  letter-spacing:.2px;margin-left:6px;
-  vertical-align:middle;
+  background:rgba(100,116,139,0.15);
+  border:1px solid rgba(100,116,139,0.25);
+  color:var(--fg-dim);font-size:9px;font-weight:500;
+  padding:1px 6px;border-radius:8px;
+  letter-spacing:.3px;margin-left:6px;
+  vertical-align:middle;text-transform:uppercase;
 }
 .message .header{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fg-dim);margin-bottom:5px}
 .message .header .role{font-weight:700;text-transform:uppercase;letter-spacing:.5px}
@@ -563,7 +563,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 if (msg.pending_delivered) {
                     const badge = document.createElement('span');
                     badge.className = 'hint-badge';
-                    badge.textContent = '📤 pending';
+                    badge.textContent = 'queued';
                     h.appendChild(badge);
                 }
                 if (msg.timestamp) {
