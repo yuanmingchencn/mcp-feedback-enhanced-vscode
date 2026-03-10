@@ -80,16 +80,11 @@ body{
 
 /* Status Bar */
 .status-bar{
-  display:flex;align-items:center;gap:8px;padding:5px 12px;
+  display:flex;align-items:center;gap:8px;padding:3px 12px;
   font-size:10px;color:var(--fg-dim);
   border-bottom:1px solid var(--border);
-  letter-spacing:.5px;text-transform:uppercase;
   background:var(--surface);
 }
-.status-dot{width:6px;height:6px;border-radius:50%;transition:all .3s}
-.status-dot.connected{background:var(--success);box-shadow:0 0 8px var(--glow-green)}
-.status-dot.connecting{background:var(--waiting-dot);animation:glow-pulse 1s infinite}
-.status-dot.disconnected{background:var(--danger);box-shadow:0 0 6px rgba(239,68,68,0.4)}
 
 /* Messages */
 .messages{
@@ -321,8 +316,7 @@ body{
 </div>
 
 <div class="status-bar" id="statusBar">
-  <span class="status-dot disconnected" id="statusDot"></span>
-  <span id="statusText">Connecting...</span>
+  <div style="flex:1"></div>
   <div class="settings-toggle"><button id="settingsBtn" title="Settings">⚙</button></div>
 </div>
 <div class="settings-panel" id="settingsPanel">
@@ -380,8 +374,8 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     const tabBar = document.getElementById('tabBar');
     const tabOverflow = document.getElementById('tabOverflow');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
+    const statusDot = document.getElementById('statusDot');  // may be null
+    const statusText = document.getElementById('statusText');  // may be null
     const messagesEl = document.getElementById('messages');
     const emptyState = document.getElementById('emptyState');
     const pendingSection = document.getElementById('pendingSection');
@@ -892,8 +886,8 @@ const SESSION_ID = '{{SESSION_ID}}';
     }
 
     function updateStatus(state, text) {
-        statusDot.className = 'status-dot ' + state;
-        statusText.textContent = text;
+        if (statusDot) statusDot.className = 'status-dot ' + state;
+        if (statusText) statusText.textContent = text;
     }
 
     // ── Message Handling ─────────────────────────────────
