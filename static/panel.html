@@ -254,6 +254,32 @@ body{
 .message .content img{max-width:200px;max-height:150px;border-radius:8px;margin:6px 0;cursor:zoom-in;display:block;transition:opacity .15s}
 .message .content img:hover{opacity:.85}
 
+/* @ Dropdown */
+.at-dropdown{
+  display:none;position:absolute;bottom:100%;left:0;right:0;
+  max-height:240px;overflow-y:auto;z-index:100;
+  background:var(--input-bg);border:1px solid var(--border);
+  border-radius:10px 10px 0 0;margin-bottom:-1px;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.3),0 0 1px rgba(124,58,237,0.3);
+  backdrop-filter:blur(12px);
+}
+.at-dropdown.visible{display:block;animation:at-in .15s ease-out}
+@keyframes at-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.at-dropdown-item{
+  display:flex;align-items:center;gap:8px;padding:7px 12px;
+  cursor:pointer;font-size:12px;transition:background .1s;
+}
+.at-dropdown-item:hover,.at-dropdown-item.active{
+  background:rgba(124,58,237,0.12);
+}
+.at-dropdown-item .kind-icon{
+  width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex-shrink:0;opacity:.7;
+  background:rgba(124,58,237,0.08);border-radius:5px;
+}
+.at-dropdown-item .at-label{color:var(--fg);font-weight:500}
+.at-dropdown-item .at-detail{color:var(--fg-dim);font-size:10px;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
+
 /* Lightbox */
 .lightbox{
   display:none;position:fixed;inset:0;
@@ -352,10 +378,11 @@ body{
 </div>
 
 <div class="image-previews" id="imagePreviews"></div>
-<div class="input-area">
+<div class="input-area" style="position:relative">
+  <div class="at-dropdown" id="atDropdown"></div>
   <div class="input-row">
     <button class="attach-btn" id="attachBtn" title="Attach image file">📎</button>
-    <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V)" rows="4"></textarea>
+    <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V, @ to reference files)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
 </div>
@@ -389,6 +416,8 @@ const SESSION_ID = '{{SESSION_ID}}';
     const settingsPanel = document.getElementById('settingsPanel');
     const autoReplyCheck = document.getElementById('autoReplyCheck');
     const autoReplyText = document.getElementById('autoReplyText');
+
+    const atDropdown = document.getElementById('atDropdown');
 
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = document.getElementById('lightboxImg');
@@ -861,6 +890,122 @@ const SESSION_ID = '{{SESSION_ID}}';
         if (tab) { tab.autoReplyText = autoReplyText.value; saveState(); }
     });
 
+    // ── @ Reference Autocomplete ─────────────────────────
+    let atSearchTimer = null;
+    let atActiveIndex = -1;
+    let atItems = [];
+    let atVisible = false;
+
+    function getAtQuery() {
+        const pos = input.selectionStart;
+        const text = input.value.substring(0, pos);
+        const match = text.match(/@([^\s]*)$/);
+        return match ? { query: match[1], atPos: pos - match[0].length } : null;
+    }
+
+    function triggerAtSearch() {
+        const result = getAtQuery();
+        if (!result || result.query.length === 0) { hideAtDropdown(); return; }
+        if (vscode) {
+            vscode.postMessage({ type: 'at-search', query: result.query });
+        }
+    }
+
+    function showAtDropdown(items) {
+        atItems = items;
+        atActiveIndex = -1;
+        if (!items || items.length === 0) { hideAtDropdown(); return; }
+        atDropdown.innerHTML = '';
+        items.forEach((item, i) => {
+            const row = document.createElement('div');
+            row.className = 'at-dropdown-item';
+            row.dataset.index = i;
+            const icon = document.createElement('span');
+            icon.className = 'kind-icon';
+            icon.textContent = item.kind === 'file' ? '📄' : '🔣';
+            const label = document.createElement('span');
+            label.className = 'at-label';
+            label.textContent = item.label;
+            const detail = document.createElement('span');
+            detail.className = 'at-detail';
+            detail.textContent = item.detail;
+            row.appendChild(icon);
+            row.appendChild(label);
+            row.appendChild(detail);
+            row.addEventListener('click', () => selectAtItem(i));
+            atDropdown.appendChild(row);
+        });
+        atDropdown.classList.add('visible');
+        atVisible = true;
+    }
+
+    function hideAtDropdown() {
+        atDropdown.classList.remove('visible');
+        atVisible = false;
+        atItems = [];
+        atActiveIndex = -1;
+    }
+
+    function setAtActive(index) {
+        const items = atDropdown.querySelectorAll('.at-dropdown-item');
+        items.forEach(el => el.classList.remove('active'));
+        if (index >= 0 && index < items.length) {
+            atActiveIndex = index;
+            items[index].classList.add('active');
+            items[index].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function selectAtItem(index) {
+        const item = atItems[index];
+        if (!item) return;
+        const result = getAtQuery();
+        if (!result) { hideAtDropdown(); return; }
+        const before = input.value.substring(0, result.atPos);
+        const after = input.value.substring(input.selectionStart);
+        const insert = '@' + item.insertText + ' ';
+        input.value = before + insert + after;
+        const newPos = before.length + insert.length;
+        input.selectionStart = input.selectionEnd = newPos;
+        input.focus();
+        hideAtDropdown();
+        if (activeTabId) {
+            const tab = tabs.get(activeTabId);
+            if (tab) tab.inputDraft = input.value;
+        }
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveState, 500);
+    }
+
+    input.addEventListener('input', function atInputHandler() {
+        clearTimeout(atSearchTimer);
+        const result = getAtQuery();
+        if (result && result.query.length > 0) {
+            atSearchTimer = setTimeout(triggerAtSearch, 150);
+        } else {
+            hideAtDropdown();
+        }
+    });
+
+    const origKeydown = input.onkeydown;
+    input.addEventListener('keydown', (e) => {
+        if (!atVisible) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setAtActive(atActiveIndex < atItems.length - 1 ? atActiveIndex + 1 : 0);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setAtActive(atActiveIndex > 0 ? atActiveIndex - 1 : atItems.length - 1);
+        } else if ((e.key === 'Enter' || e.key === 'Tab') && atActiveIndex >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectAtItem(atActiveIndex);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            hideAtDropdown();
+        }
+    }, true);
+
     // ── WebSocket ────────────────────────────────────────
     function connect() {
         if (ws && ws.readyState === WebSocket.OPEN) return;
@@ -1060,6 +1205,7 @@ const SESSION_ID = '{{SESSION_ID}}';
         const msg = event.data;
         if (msg.type === 'reconnect') { if (ws) { try { ws.close(); } catch {} } ws = null; reconnectAttempts = 0; connect(); }
         else if (msg.type === 'focus-input') input.focus();
+        else if (msg.type === 'at-results') showAtDropdown(msg.items || []);
     });
 
     // ── Heartbeat ────────────────────────────────────────

@@ -110,10 +110,71 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
                     this.recreate();
                     break;
 
+                case 'at-search':
+                    this._handleAtSearch(message.query as string, view);
+                    break;
+
                 case 'log':
                     break;
             }
         });
+    }
+
+    private async _handleAtSearch(query: string, view: vscode.WebviewView): Promise<void> {
+        if (!query) {
+            view.webview.postMessage({ type: 'at-results', items: [] });
+            return;
+        }
+
+        const items: Array<{ kind: string; label: string; detail: string; insertText: string }> = [];
+
+        try {
+            const filePattern = `**/*${query}*`;
+            const excludePattern = '{**/node_modules/**,**/.git/**,**/dist/**,**/out/**,**/.next/**,**/build/**}';
+            const files = await vscode.workspace.findFiles(filePattern, excludePattern, 15);
+            const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+
+            for (const file of files) {
+                const rel = workspaceRoot ? vscode.workspace.asRelativePath(file, false) : file.fsPath;
+                items.push({
+                    kind: 'file',
+                    label: path.basename(file.fsPath),
+                    detail: rel,
+                    insertText: rel,
+                });
+            }
+        } catch { /* ignore file search errors */ }
+
+        try {
+            const symbols = await vscode.commands.executeCommand<vscode.SymbolInformation[]>(
+                'vscode.executeWorkspaceSymbolProvider', query
+            );
+            if (symbols) {
+                const workspaceRoot = vscode.workspace.workspaceFolders?.[0]?.uri;
+                for (const sym of symbols.slice(0, 10)) {
+                    const rel = workspaceRoot
+                        ? vscode.workspace.asRelativePath(sym.location.uri, false)
+                        : sym.location.uri.fsPath;
+                    const line = sym.location.range.start.line + 1;
+                    items.push({
+                        kind: 'symbol',
+                        label: sym.name,
+                        detail: `${rel}:${line}`,
+                        insertText: `${sym.name} (${rel}:${line})`,
+                    });
+                }
+            }
+        } catch { /* ignore symbol search errors */ }
+
+        // Deduplicate by insertText, cap at 20
+        const seen = new Set<string>();
+        const unique = items.filter(it => {
+            if (seen.has(it.insertText)) return false;
+            seen.add(it.insertText);
+            return true;
+        }).slice(0, 20);
+
+        view.webview.postMessage({ type: 'at-results', items: unique });
     }
 
     private _focusPanel(): void {
