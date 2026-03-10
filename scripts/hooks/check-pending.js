@@ -117,11 +117,31 @@ function findServerPid(workspaceRoots) {
 
 // ─── Main ─────────────────────────────────────────────────
 
+function log(msg) {
+    try {
+        const logDir = path.join(CONFIG_DIR, 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        const logFile = path.join(logDir, 'hooks.log');
+        // Rotate at ~2MB
+        try {
+            const stat = fs.statSync(logFile);
+            if (stat.size > 2 * 1024 * 1024) {
+                try { fs.unlinkSync(logFile + '.old'); } catch {}
+                fs.renameSync(logFile, logFile + '.old');
+            }
+        } catch {}
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {}
+}
+
 function main() {
+    let rawInput = '';
     let input;
     try {
-        input = JSON.parse(fs.readFileSync('/dev/stdin', 'utf-8'));
-    } catch {
+        rawInput = fs.readFileSync('/dev/stdin', 'utf-8');
+        input = JSON.parse(rawInput);
+    } catch (e) {
+        log(`PARSE_ERROR: ${e.message} raw=${rawInput.slice(0, 200)}`);
         output({ continue: true });
         return;
     }
@@ -131,18 +151,12 @@ function main() {
     const loopCount = input.loop_count || 0;
     const workspaceRoots = input.workspace_roots || [];
 
-    // Debug: log all hook invocations with full input
-    try {
-        const logDir = path.join(CONFIG_DIR, 'logs');
-        fs.mkdirSync(logDir, { recursive: true });
-        fs.appendFileSync(path.join(logDir, 'hooks.log'),
-            `[${new Date().toISOString()}] ${hook} input=${JSON.stringify(input)}\n`
-        );
-    } catch {}
+    log(`${hook} conv=${conversationId} model=${input.model || ''} tool=${input.tool_name || ''} ws=${JSON.stringify(workspaceRoots)}`);
 
     // ─── sessionStart ─────────────────────────────────
     if (hook === 'sessionStart') {
         const serverPid = findServerPid(workspaceRoots);
+        log(`sessionStart: conv=${conversationId} serverPid=${serverPid} ws=${JSON.stringify(workspaceRoots)}`);
         const envOutput = serverPid ? { MCP_FEEDBACK_SERVER_PID: String(serverPid) } : {};
 
         // Register session only if server is already running
@@ -208,7 +222,6 @@ function main() {
     }
 
     // ─── preToolUse ───────────────────────────────────
-    // Uses permission/user_message/agent_message per official docs.
     // Must consume pending here because when preToolUse denies,
     // beforeShellExecution/beforeMCPExecution won't fire.
     if (hook === 'preToolUse') {
