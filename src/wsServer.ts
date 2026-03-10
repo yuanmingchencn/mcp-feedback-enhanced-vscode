@@ -325,7 +325,7 @@ export class FeedbackWSServer {
                 session_id: sessionId,
                 conversation_id: conversationId,
                 summary: req.summary,
-                label: conv?.label,
+                label: conversationId || conv?.label,
             },
         });
 
@@ -373,11 +373,18 @@ export class FeedbackWSServer {
             const conv = readConversation(convId);
             if (conv) {
                 conv.state = 'running';
+                conv.server_pid = process.pid;
                 conv.active_session_id = null;
                 conv.pending_queue = [];
                 writeConversation(conv);
             }
 
+            // Cancel pending watcher to prevent duplicate pending_delivered broadcast
+            const watcher = this.pendingWatchers.get(convId);
+            if (watcher) {
+                clearInterval(watcher);
+                this.pendingWatchers.delete(convId);
+            }
             // Clean up pending file to prevent hook double-consumption
             deletePending(convId);
         }
@@ -498,6 +505,7 @@ export class FeedbackWSServer {
 
         let lastKnownComments: string[] = [];
         let lastKnownImages: string[] = [];
+        let lastKnownServerPid: number | null = null;
 
         const timer = setInterval(() => {
             try {
@@ -505,12 +513,17 @@ export class FeedbackWSServer {
                 if (data) {
                     if (data.comments?.length) lastKnownComments = data.comments;
                     if (data.images?.length) lastKnownImages = data.images;
+                    lastKnownServerPid = data?.server_pid ?? null;
                 }
             } catch {}
 
             if (!fs.existsSync(filePath)) {
                 clearInterval(timer);
                 this.pendingWatchers.delete(conversationId);
+
+                if (lastKnownServerPid !== null && lastKnownServerPid !== process.pid) {
+                    return; // Another window's pending, skip
+                }
 
                 const conv = readConversation(conversationId);
                 const deliveredComments = lastKnownComments.length > 0 ? lastKnownComments : (conv ? [...conv.pending_queue] : []);
@@ -591,6 +604,10 @@ export class FeedbackWSServer {
         const restoredConvs = listConversations().filter(c => {
             if (c.server_pid === process.pid) return false; // already handled above
             if (c.state === 'archived') return false;
+            // Skip active conversations from other windows
+            if (c.state && c.state !== 'idle' && c.state !== 'ended' && c.server_pid && c.server_pid !== process.pid) {
+                return false;
+            }
             const convRoots = (c.workspace_roots || []).map(r => r.replace(/\/+$/, ''));
             return convRoots.some(r => myRoots.has(r));
         });
@@ -730,6 +747,7 @@ export class FeedbackWSServer {
         }
 
         conv.state = 'waiting';
+        conv.server_pid = process.pid;
         conv.active_session_id = sessionId;
         if (summary) {
             conv.label = label;
@@ -760,7 +778,14 @@ export class FeedbackWSServer {
 
     private _sendConversationsList(ws: WebSocket): void {
         const conversations = listConversations()
-            .filter(c => c.server_pid === process.pid && c.state !== 'archived')
+            .filter(c => {
+                if (c.state === 'archived') return false;
+                // Skip active conversations from other windows
+                if (c.state && c.state !== 'idle' && c.state !== 'ended' && c.server_pid && c.server_pid !== process.pid) {
+                    return false;
+                }
+                return c.server_pid === process.pid;
+            })
             .map(c => ({
                 conversation_id: c.conversation_id,
                 model: c.model,

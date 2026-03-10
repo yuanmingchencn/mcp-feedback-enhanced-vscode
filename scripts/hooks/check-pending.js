@@ -21,7 +21,9 @@ const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
 const STOP_LOOP_LIMIT = 3;
-const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
+const FOLLOW_INSTRUCTIONS =
+    'You MUST call the interactive_feedback tool now to check in with the user before ending. ' +
+    'Provide a clear summary of what was done and ask for next steps.';
 
 const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
 
@@ -103,19 +105,19 @@ function findServerPid(workspaceRoots) {
         if (servers.length === 0) { log('  findServerPid: no alive servers'); return null; }
         if (servers.length === 1) { log(`  findServerPid: single server pid=${servers[0].pid}`); return servers[0].pid; }
 
-        // Priority 1: CURSOR_TRACE_ID uniquely identifies the Cursor window
+        // Priority 1: workspace match (definitive per Cursor window)
+        const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
+        for (const s of servers) {
+            const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
+            if (roots.some(r => sWs.includes(r))) { log(`  findServerPid: workspace match pid=${s.pid}`); return s.pid; }
+        }
+
+        // Priority 2: CURSOR_TRACE_ID fallback (not unique per window on macOS)
         const traceId = process.env.CURSOR_TRACE_ID || '';
         if (traceId) {
             for (const s of servers) {
                 if (s.cursorTraceId === traceId) { log(`  findServerPid: traceId match pid=${s.pid}`); return s.pid; }
             }
-        }
-
-        // Priority 2: workspace match (only when traceId unavailable or unmatched)
-        const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
-        for (const s of servers) {
-            const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
-            if (roots.some(r => sWs.includes(r))) { log(`  findServerPid: workspace match pid=${s.pid}`); return s.pid; }
         }
 
         log(`  findServerPid: fallback to first pid=${servers[0].pid}`);
@@ -236,8 +238,8 @@ function main() {
     }
 
     // ─── preToolUse ───────────────────────────────────
-    // Must consume pending here because when preToolUse denies,
-    // beforeShellExecution/beforeMCPExecution won't fire.
+    // Never consume: Cursor ignores preToolUse deny for Shell/MCP tools,
+    // so pending must survive for beforeShellExecution/beforeMCPExecution.
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId);
@@ -245,16 +247,11 @@ function main() {
 
         if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            consumePending(conversationId);
-            output({
-                permission: 'deny',
-                user_message: fmtUser(combined),
-                agent_message: fmtAgent(combined),
-            });
+            output({ decision: 'deny', reason: fmtAgent(combined) });
             return;
         }
 
-        output({});
+        output({ decision: 'allow' });
         return;
     }
 

@@ -6,8 +6,7 @@
  * - interactive_feedback: Request feedback from user, routed by conversation_id
  * - get_system_info: Return system information
  *
- * Routing: CURSOR_TRACE_ID → server file → port → WebSocket
- * Fallback: conversation_id → session file → server file → port
+ * Routing: project_directory → workspace match (primary), then session file, then CURSOR_TRACE_ID, then single server
  * Last resort: browser fallback
  */
 
@@ -71,13 +70,23 @@ function isPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 
 // ─── Extension Discovery ─────────────────────────────────
 
-async function findExtensionServer(conversationId?: string): Promise<ServerData | null> {
-    // Strategy 1: CURSOR_TRACE_ID → server (most reliable for multi-window)
-    const traceId = process.env.CURSOR_TRACE_ID || '';
-    if (traceId) {
+function workspaceMatches(workspaces: string[], projectDir: string): boolean {
+    const normalized = path.normalize(projectDir);
+    for (const w of workspaces) {
+        const wn = path.normalize(w);
+        if (wn === normalized) return true;
+        if (normalized.startsWith(wn + path.sep)) return true;
+        if (wn.startsWith(normalized + path.sep)) return true;
+    }
+    return false;
+}
+
+async function findExtensionServer(conversationId?: string, projectDirectory?: string): Promise<ServerData | null> {
+    // Strategy 1: project_directory → workspace match (definitive, unique per Cursor window)
+    if (projectDirectory) {
         for (const f of listJSONFiles(SERVERS_DIR)) {
             const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
-            if (server?.cursorTraceId === traceId && await isPortOpen(server.port)) {
+            if (server?.workspaces?.length && workspaceMatches(server.workspaces, projectDirectory) && await isPortOpen(server.port)) {
                 return server;
             }
         }
@@ -94,7 +103,18 @@ async function findExtensionServer(conversationId?: string): Promise<ServerData 
         }
     }
 
-    // Strategy 3: single server fallback
+    // Strategy 3: CURSOR_TRACE_ID → server (fallback; not unique per window on macOS)
+    const traceId = process.env.CURSOR_TRACE_ID || '';
+    if (traceId) {
+        for (const f of listJSONFiles(SERVERS_DIR)) {
+            const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
+            if (server?.cursorTraceId === traceId && await isPortOpen(server.port)) {
+                return server;
+            }
+        }
+    }
+
+    // Strategy 4: single server fallback (last resort)
     const allServers: ServerData[] = [];
     for (const f of listJSONFiles(SERVERS_DIR)) {
         const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
@@ -139,6 +159,7 @@ function requestFeedback(
     conversationId: string,
     summary: string,
     projectDirectory?: string,
+    label?: string,
 ): Promise<{ feedback: string; images?: string[] }> {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -173,6 +194,7 @@ function requestFeedback(
             type: 'feedback_request',
             session_id: sessionId,
             conversation_id: conversationId,
+            label: label || '',
             project_directory: projectDirectory,
             summary,
         }));
@@ -266,7 +288,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'Request interactive feedback from the user. Call this tool to check in with the user, present your progress, and get their input before continuing.',
             inputSchema: {
                 type: 'object' as const,
-                required: ['summary', 'conversation_id'],
+                required: ['summary'],
                 properties: {
                     summary: {
                         type: 'string',
@@ -274,7 +296,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     },
                     conversation_id: {
                         type: 'string',
-                        description: 'Your conversation ID, provided at session start. Use the EXACT value given to you. Do NOT fabricate or modify this value.',
+                        description: 'Your Cursor conversation ID. Pass the exact value from the hook instruction.',
+                    },
+                    agent_name: {
+                        type: 'string',
+                        description: 'Display name for this conversation tab.',
                     },
                     project_directory: {
                         type: 'string',
@@ -315,22 +341,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'interactive_feedback') {
         const parsed = z.object({
             summary: z.string(),
-            conversation_id: z.string(),
+            agent_name: z.string().optional().describe('Agent or session name for routing.'),
+            conversation_id: z.string().optional().describe('Conversation ID or title for this chat session. Used as the session identifier.'),
             project_directory: z.string().optional(),
         }).parse(args);
 
-        const { summary, conversation_id, project_directory } = parsed;
+        const { summary, agent_name, conversation_id, project_directory } = parsed;
         const sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         try {
             // Find extension and connect
-            const extensionServer = await findExtensionServer(conversation_id);
+            const extensionServer = await findExtensionServer(conversation_id || '', project_directory);
 
             if (extensionServer) {
                 const ws = await connectToExtension(extensionServer.port);
                 try {
                     const result = await requestFeedback(
-                        ws, sessionId, conversation_id || '', summary, project_directory
+                        ws, sessionId, conversation_id || '', summary, project_directory, agent_name || ''
                     );
                     const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
                         { type: 'text', text: result.feedback },

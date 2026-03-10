@@ -63,6 +63,10 @@ body{
   box-shadow:0 1px 8px rgba(124,58,237,0.2);
 }
 .tab.ended{opacity:.4;font-style:italic}
+.tab.tab-ended{opacity:.5}
+.tab.tab-ended .dot{background:#666}
+.messages-muted .msg-row{opacity:.6}
+.messages-muted .msg-row .message{filter:grayscale(.3)}
 .tab .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
 .tab .dot.waiting{background:var(--waiting-dot);box-shadow:0 0 6px var(--waiting-dot);animation:glow-pulse 1.5s infinite}
 .tab .dot.running{background:var(--success);box-shadow:0 0 6px var(--success);animation:glow-pulse 2s infinite}
@@ -333,6 +337,12 @@ body{
   font-size:12px;margin-top:4px;transition:all .2s;
 }
 .settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.12)}
+
+/* Input hidden when viewing ended/idle tab */
+body.input-hidden .input-area,
+body.input-hidden .quick-replies,
+body.input-hidden .image-previews,
+body.input-hidden .pending-section{display:none!important}
 </style>
 </head>
 <body>
@@ -499,7 +509,8 @@ const SESSION_ID = '{{SESSION_ID}}';
         tabBar.querySelectorAll('.tab').forEach(el => el.remove());
         for (const [id, tab] of tabs) {
             const el = document.createElement('div');
-            el.className = 'tab' + (id === activeTabId ? ' active' : '') + (tab.state === 'ended' ? ' ended' : '');
+            const isEndedOrIdle = tab.state === 'ended' || tab.state === 'idle';
+            el.className = 'tab' + (id === activeTabId ? ' active' : '') + (tab.state === 'ended' ? ' ended' : '') + (isEndedOrIdle ? ' tab-ended' : '');
 
             const dot = document.createElement('span');
             dot.className = 'dot ' + tab.state;
@@ -568,7 +579,13 @@ const SESSION_ID = '{{SESSION_ID}}';
     function renderMessages() {
         messagesEl.innerHTML = '';
         const tab = activeTabId ? tabs.get(activeTabId) : null;
-        if (!tab || tab.messages.length === 0) { emptyState.style.display = 'flex'; return; }
+        if (!tab || tab.messages.length === 0) {
+            emptyState.style.display = 'flex';
+            messagesEl.appendChild(emptyState);
+            const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+            messagesEl.classList.toggle('messages-muted', !!isEndedOrIdle);
+            return;
+        }
         emptyState.style.display = 'none';
 
         for (const msg of tab.messages) {
@@ -610,6 +627,8 @@ const SESSION_ID = '{{SESSION_ID}}';
             row.appendChild(el);
             messagesEl.appendChild(row);
         }
+        const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+        messagesEl.classList.toggle('messages-muted', !!isEndedOrIdle);
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -669,10 +688,9 @@ const SESSION_ID = '{{SESSION_ID}}';
         if (!hasText && !hasImages) return;
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab) return;
-        if (hasText) tab.pendingQueue.push(text.trim());
+        if (hasText) tab.pendingQueue = [text.trim()];
         if (hasImages) {
-            if (!tab.pendingImages) tab.pendingImages = [];
-            tab.pendingImages.push(...pendingImages);
+            tab.pendingImages = [...pendingImages];
             clearImages();
         }
         syncPending();
@@ -705,6 +723,8 @@ const SESSION_ID = '{{SESSION_ID}}';
         const hasContent = input.value.trim().length > 0 || pendingImages.length > 0;
         const isWaiting = tab && tab.state === 'waiting' && tab.pendingSessionId;
         const isEnded = tab && tab.state === 'ended';
+        const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+        document.body.classList.toggle('input-hidden', !!isEndedOrIdle);
         if (isEnded) { sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn'; }
         else if (isWaiting) { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn'; }
         else { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode'; }

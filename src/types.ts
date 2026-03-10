@@ -91,6 +91,7 @@ export interface SessionUpdate {
         conversation_id: string;
         summary: string;
         model?: string;
+        label?: string;
     };
 }
 
