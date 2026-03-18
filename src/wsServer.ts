@@ -22,6 +22,19 @@ import type {
     WSMessage,
     ConversationMessage,
 } from './types';
+
+// Validated shape from FeedbackRequestSchema (session_id, conversation_id guaranteed)
+type ValidatedFeedbackRequest = FeedbackRequest & { session_id: string; conversation_id: string };
+import {
+    validateMessage,
+    FeedbackRequestSchema,
+    FeedbackResponseSchema,
+    QueuePendingSchema,
+    RegisterSchema,
+    LoadConversationSchema,
+    DismissFeedbackSchema,
+    CloseTabSchema,
+} from './messageSchemas';
 import {
     writeServer,
     deleteServer,
@@ -245,24 +258,32 @@ export class FeedbackWSServer {
 
     private _handleMessage(ws: WebSocket, client: ConnectedClient, msg: WSMessage): void {
         switch (msg.type) {
-            case 'register':
-                client.clientType = (msg.clientType as string) === 'mcp-server' ? 'mcp-server' : 'webview';
-                client.projectPath = msg.projectPath as string | undefined;
+            case 'register': {
+                const reg = validateMessage(RegisterSchema, msg, 'register');
+                if (!reg) break;
+                client.clientType = reg.clientType;
+                client.projectPath = reg.projectPath;
                 wsLog(`client registered: type=${client.clientType} project=${client.projectPath || ''}`);
                 break;
-
-            case 'feedback_request':
-                this._handleFeedbackRequest(ws, msg as unknown as FeedbackRequest);
+            }
+            case 'feedback_request': {
+                const req = validateMessage(FeedbackRequestSchema, msg, 'feedback_request');
+                if (!req) break;
+                this._handleFeedbackRequest(ws, req);
                 break;
-
-            case 'feedback_response':
-                this._handleFeedbackResponse(msg as unknown as FeedbackResponse);
+            }
+            case 'feedback_response': {
+                const res = validateMessage(FeedbackResponseSchema, msg, 'feedback_response');
+                if (!res) break;
+                this._handleFeedbackResponse(res);
                 break;
-
-            case 'queue-pending':
-                this._handleQueuePending(msg);
+            }
+            case 'queue-pending': {
+                const qp = validateMessage(QueuePendingSchema, msg, 'queue-pending');
+                if (!qp) break;
+                this._handleQueuePending(qp);
                 break;
-
+            }
             case 'get_sessions':
                 this._sendSessionsList(ws);
                 break;
@@ -271,18 +292,24 @@ export class FeedbackWSServer {
                 this._sendConversationsList(ws);
                 break;
 
-            case 'load_conversation':
-                this._sendConversationData(ws, msg.conversation_id as string);
+            case 'load_conversation': {
+                const lc = validateMessage(LoadConversationSchema, msg, 'load_conversation');
+                if (!lc) break;
+                this._sendConversationData(ws, lc.conversation_id);
                 break;
-
-            case 'dismiss_feedback':
-                this._handleDismiss(msg.session_id as string);
+            }
+            case 'dismiss_feedback': {
+                const df = validateMessage(DismissFeedbackSchema, msg, 'dismiss_feedback');
+                if (!df) break;
+                this._handleDismiss(df.session_id);
                 break;
-
-            case 'close_tab':
-                this._handleCloseTab(msg.conversation_id as string);
+            }
+            case 'close_tab': {
+                const ct = validateMessage(CloseTabSchema, msg, 'close_tab');
+                if (!ct) break;
+                this._handleCloseTab(ct.conversation_id);
                 break;
-
+            }
             case 'ping':
             case 'heartbeat':
                 client.lastPong = Date.now();
@@ -293,10 +320,10 @@ export class FeedbackWSServer {
 
     // ─── Feedback Flow ────────────────────────────────────
 
-    private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest): void {
-        wsLog(`feedbackRequest: session=${req.session_id || ''} conv=${req.conversation_id || ''} summary=${(req.summary || '').slice(0, 60)}`);
-        const sessionId = req.session_id || this._generateId();
-        let conversationId = req.conversation_id || '';
+    private _handleFeedbackRequest(mcpWs: WebSocket, req: ValidatedFeedbackRequest): void {
+        wsLog(`feedbackRequest: session=${req.session_id} conv=${req.conversation_id} summary=${req.summary.slice(0, 60)}`);
+        const sessionId = req.session_id;
+        let conversationId = req.conversation_id;
 
         // Resolve custom conversation_id to Cursor UUID if needed
         conversationId = this._resolveConversationId(conversationId);
@@ -317,15 +344,16 @@ export class FeedbackWSServer {
             });
         });
 
-        // Broadcast to all webviews
+        // Broadcast to all webviews (label must be non-empty)
         const conv = readConversation(conversationId);
+        const label = req.label || conv?.label || req.summary.slice(0, 60);
         this._broadcastToWebviews({
             type: 'session_updated',
             session_info: {
                 session_id: sessionId,
                 conversation_id: conversationId,
                 summary: req.summary,
-                label: req.label || conv?.label,
+                label,
             },
         });
 
@@ -354,7 +382,7 @@ export class FeedbackWSServer {
 
     private _handleFeedbackResponse(res: FeedbackResponse): void {
         const pending = this.pendingRequests.get(res.session_id);
-        wsLog(`feedbackResponse: session=${res.session_id} found=${!!pending} feedback=${(res.feedback || '').slice(0, 60)} images=${(res.images || []).length}`);
+        wsLog(`feedbackResponse: session=${res.session_id} found=${!!pending} feedback=${res.feedback.slice(0, 60)} images=${(res.images ?? []).length}`);
         if (!pending) {
             // No pending request for this session_id
             return;
@@ -394,7 +422,7 @@ export class FeedbackWSServer {
         const feedbackWithReminder = res.feedback +
             '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
 
-        pending.resolve({ feedback: feedbackWithReminder, images: res.images });
+        pending.resolve({ feedback: feedbackWithReminder, images: res.images ?? undefined });
         this.pendingRequests.delete(res.session_id);
 
         this._broadcastToWebviews({
@@ -422,24 +450,11 @@ export class FeedbackWSServer {
 
     // ─── Pending Queue ────────────────────────────────────
 
-    private _handleQueuePending(msg: WSMessage): void {
-        wsLog(`queuePending: conv=${msg.conversation_id} comments=${((msg as any).comments || []).length} images=${((msg as any).images || []).length}`);
-        const conversationId = msg.conversation_id as string;
-        if (!conversationId) { return; }
-
-        const comments = msg.comments as string[] | undefined;
-        const singleText = msg.text as string | undefined;
-        const images = (msg.images as string[] | undefined) || [];
-
-        let queue: string[];
-        if (comments && Array.isArray(comments)) {
-            queue = comments.filter(c => c.trim());
-        } else if (singleText?.trim()) {
-            const existing = readPending(conversationId);
-            queue = existing ? [...existing.comments, singleText.trim()] : [singleText.trim()];
-        } else {
-            queue = [];
-        }
+    private _handleQueuePending(qp: { conversation_id: string; comments: string[]; images?: string[] }): void {
+        wsLog(`queuePending: conv=${qp.conversation_id} comments=${qp.comments.length} images=${(qp.images ?? []).length}`);
+        const conversationId = qp.conversation_id;
+        const queue = qp.comments.filter(c => c.trim());
+        const images = qp.images ?? [];
 
         if (queue.length === 0 && images.length === 0) {
             deletePending(conversationId);
