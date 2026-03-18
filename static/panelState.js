@@ -92,6 +92,8 @@
                     const tab = this.tabs.get(msg.conversation_id);
                     if (tab) {
                         tab.state = 'ended';
+                        tab.pendingQueue = [];
+                        tab.pendingImages = [];
                         tab.messages.push({
                             role: 'system',
                             content: '── Session ended ──',
@@ -111,6 +113,9 @@
                     if (!info || !info.conversation_id) break;
 
                     const id = info.conversation_id;
+                    const existing = this.tabs.get(id);
+                    if (existing && existing.state === 'ended') break;
+
                     const tab = this.getOrCreateTab(id, info.label || null, null, 'waiting');
                     tab.state = 'waiting';
                     tab.pendingSessionId = info.session_id;
