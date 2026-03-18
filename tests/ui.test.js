@@ -714,7 +714,7 @@ describe('pending queue replace behavior', () => {
         if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
     });
 
-    it('second queued message replaces first', async () => {
+    it('second queued message appends to first', async () => {
         tempHtmlPath = await preparePanelHtml(serverPort);
         const convId = uniqueId();
         const sessionId = uniqueId('sess');
@@ -748,11 +748,12 @@ describe('pending queue replace behavior', () => {
             await page.click('#sendBtn');
             await yieldToEventLoop(150);
 
-            const pendingText = await page.textContent('.pending-item .text');
-            assert.ok(pendingText && pendingText.includes('second message'));
-            assert.ok(!pendingText.includes('first message'));
+            const items = await page.$$eval('.pending-item .text', els => els.map(e => e.textContent));
+            assert.strictEqual(items.length, 2);
+            assert.ok(items[0].includes('first message'));
+            assert.ok(items[1].includes('second message'));
             const pendingCount = await page.textContent('#pendingCount');
-            assert.strictEqual(pendingCount, '1');
+            assert.strictEqual(pendingCount, '2');
         } finally {
             await closeClient(mcpWs);
             await page.close();

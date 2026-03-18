@@ -317,7 +317,7 @@
             const tab = this.activeTabId ? this.tabs.get(this.activeTabId) : null;
             if (!tab) return null;
 
-            if (hasText) tab.pendingQueue = [text.trim()];
+            if (hasText) tab.pendingQueue.push(text.trim());
             if (hasImages) tab.pendingImages = [...images];
 
             const wsMessages = [
@@ -329,18 +329,8 @@
                 },
             ];
 
-            tab.messages.push({
-                role: 'system',
-                content:
-                    '📤 Queued: ' +
-                    (hasText
-                        ? text.trim().slice(0, 80) + (text.trim().length > 80 ? '...' : '')
-                        : '(images)'),
-                timestamp: new Date().toISOString(),
-            });
-
             return {
-                effects: ['render_messages', 'render_pending', 'save_state', 'clear_input'],
+                effects: ['render_pending', 'save_state', 'clear_input'],
                 wsMessages,
             };
         }

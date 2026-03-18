@@ -83,9 +83,9 @@ class QueuePendingCommand {
         return tab && tab.state === 'running';
     }
     run(model, real) {
-        real.addToPending(this.text);
+        real.addToPending(this.text, []);
         const tab = model.tabs.get(model.activeTabId);
-        tab.pendingCount = 1;
+        tab.pendingCount += 1;
     }
     toString() {
         return `QueuePending(${this.text})`;
@@ -162,7 +162,7 @@ const allCommands = [
 const commandArb = fc.commands(allCommands, { maxCommands: 50 });
 
 describe('model-based properties', () => {
-    it('Property 1: pending queue length is always 0 or 1', () => {
+    it('Property 1: pending queue length matches model count', () => {
         fc.assert(
             fc.property(commandArb, (cmds) => {
                 const real = new PanelState();
@@ -170,9 +170,11 @@ describe('model-based properties', () => {
                 const s = () => ({ model, real });
                 fc.modelRun(s, cmds);
                 for (const [id, tab] of real.tabs) {
-                    assert.ok(
-                        tab.pendingQueue.length <= 1,
-                        `Tab ${id} has ${tab.pendingQueue.length} pending items`
+                    const expected = model.tabs.get(id)?.pendingCount ?? 0;
+                    assert.strictEqual(
+                        tab.pendingQueue.length,
+                        expected,
+                        `Tab ${id} has ${tab.pendingQueue.length} pending but model expects ${expected}`
                     );
                 }
             }),

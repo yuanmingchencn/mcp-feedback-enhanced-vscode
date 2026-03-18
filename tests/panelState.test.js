@@ -108,14 +108,17 @@ describe('PanelState', () => {
         assert.strictEqual(r.autoReply.sessionId, 's1');
     });
 
-    it('addToPending replaces queue and returns effects', () => {
+    it('addToPending appends to queue and returns effects', () => {
         const p = new PanelState();
         p.getOrCreateTab('c1', 'A', '', 'idle');
         p.activeTabId = 'c1';
         const r = p.addToPending('hello', []);
         assert.ok(r);
         assert.strictEqual(p.tabs.get('c1').pendingQueue[0], 'hello');
+        assert.ok(r.effects.includes('render_pending'));
+        assert.ok(r.effects.includes('save_state'));
         assert.ok(r.effects.includes('clear_input'));
+        assert.ok(!r.effects.includes('render_messages'));
         assert.strictEqual(r.wsMessages[0].type, 'queue-pending');
     });
 
@@ -278,13 +281,13 @@ describe('PanelState', () => {
     });
 
     // --- Pending queue ---
-    it('second addToPending replaces first (pendingQueue = [second])', () => {
+    it('second addToPending appends to first (pendingQueue = [first, second])', () => {
         const p = new PanelState();
         p.getOrCreateTab('c1', 'A', '', 'idle');
         p.activeTabId = 'c1';
         p.addToPending('first', []);
         p.addToPending('second', []);
-        assert.deepStrictEqual(p.tabs.get('c1').pendingQueue, ['second']);
+        assert.deepStrictEqual(p.tabs.get('c1').pendingQueue, ['first', 'second']);
     });
 
     it('editPending returns correct text and empties queue', () => {

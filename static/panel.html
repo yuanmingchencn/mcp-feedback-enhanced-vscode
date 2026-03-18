@@ -682,7 +682,7 @@ const SESSION_ID = '{{SESSION_ID}}';
         if (!hasText && !hasImages) return;
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab) return;
-        if (hasText) tab.pendingQueue = [text.trim()];
+        if (hasText) tab.pendingQueue.push(text.trim());
         if (hasImages) {
             tab.pendingImages = [...pendingImages];
             clearImages();
@@ -803,7 +803,7 @@ const SESSION_ID = '{{SESSION_ID}}';
     // Paste image from clipboard (listen on textarea + document)
     async function handlePaste(e) {
         const items = e.clipboardData?.items;
-        if (!items) return;
+        if (!items) { pasteFromClipboard(); return; }
         let found = false;
         for (const item of items) {
             if (item.type.startsWith('image/')) {
@@ -816,9 +816,10 @@ const SESSION_ID = '{{SESSION_ID}}';
                 }
             }
         }
-        return found;
+        if (!found) pasteFromClipboard();
     }
     input.addEventListener('paste', handlePaste);
+    document.addEventListener('paste', handlePaste);
 
     // Drag & drop images onto the input area
     const inputArea = input.parentElement.parentElement;
