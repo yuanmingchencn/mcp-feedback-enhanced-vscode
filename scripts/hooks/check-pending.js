@@ -21,7 +21,9 @@ const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
 const STOP_LOOP_LIMIT = 3;
-const FOLLOW_INSTRUCTIONS = 'Please follow mcp-feedback-enhanced instructions.';
+const FOLLOW_INSTRUCTIONS =
+    'You MUST call the interactive_feedback tool now to check in with the user before ending. ' +
+    'Provide a clear summary of what was done and ask for next steps.';
 
 const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
 
@@ -41,7 +43,24 @@ const USAGE_RULES = [
 
 // ─── Helpers ──────────────────────────────────────────────
 
+function log(msg) {
+    try {
+        const logDir = path.join(CONFIG_DIR, 'logs');
+        fs.mkdirSync(logDir, { recursive: true });
+        const logFile = path.join(logDir, 'hooks.log');
+        try {
+            const stat = fs.statSync(logFile);
+            if (stat.size > 2 * 1024 * 1024) {
+                try { fs.unlinkSync(logFile + '.old'); } catch {}
+                fs.renameSync(logFile, logFile + '.old');
+            }
+        } catch {}
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {}
+}
+
 function output(obj) {
+    log(`  → output: ${JSON.stringify(obj).slice(0, 300)}`);
     process.stdout.write(JSON.stringify(obj));
 }
 
@@ -74,14 +93,24 @@ function hasPendingContent(p) {
 function consumePending(conversationId) {
     if (!conversationId) return;
     const filePath = path.join(PENDING_DIR, `${conversationId}.json`);
-    try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch {}
+    try {
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            log(`  consumed pending: ${conversationId}`);
+        }
+    } catch (e) {
+        log(`  consumePending error: ${e.message}`);
+    }
 }
 
 // ─── Server Matching ──────────────────────────────────────
 
 function findServerPid(workspaceRoots) {
     try {
-        if (!fs.existsSync(SERVERS_DIR)) return null;
+        if (!fs.existsSync(SERVERS_DIR)) {
+            log('  findServerPid: no servers dir');
+            return null;
+        }
         const files = fs.readdirSync(SERVERS_DIR).filter(f => f.endsWith('.json'));
         const servers = [];
 
@@ -93,24 +122,37 @@ function findServerPid(workspaceRoots) {
             servers.push(s);
         }
 
-        if (servers.length === 0) return null;
-        if (servers.length === 1) return servers[0].pid;
+        if (servers.length === 0) {
+            log('  findServerPid: no alive servers');
+            return null;
+        }
+        if (servers.length === 1) {
+            log(`  findServerPid: single server pid=${servers[0].pid}`);
+            return servers[0].pid;
+        }
 
         // Match by workspace
         const roots = (workspaceRoots || []).map(r => r.replace(/\/+$/, ''));
         for (const s of servers) {
             const sWs = (s.workspaces || []).map(w => w.replace(/\/+$/, ''));
-            if (roots.some(r => sWs.includes(r))) return s.pid;
+            if (roots.some(r => sWs.includes(r))) {
+                log(`  findServerPid: workspace match pid=${s.pid}`);
+                return s.pid;
+            }
         }
 
         // Match by CURSOR_TRACE_ID
         const traceId = process.env.CURSOR_TRACE_ID || '';
         if (traceId) {
             for (const s of servers) {
-                if (s.cursorTraceId === traceId) return s.pid;
+                if (s.cursorTraceId === traceId) {
+                    log(`  findServerPid: traceId match pid=${s.pid}`);
+                    return s.pid;
+                }
             }
         }
 
+        log(`  findServerPid: fallback to first pid=${servers[0].pid}`);
         return servers[0].pid;
     } catch { return null; }
 }
@@ -118,10 +160,13 @@ function findServerPid(workspaceRoots) {
 // ─── Main ─────────────────────────────────────────────────
 
 function main() {
+    let rawInput = '';
     let input;
     try {
-        input = JSON.parse(fs.readFileSync('/dev/stdin', 'utf-8'));
-    } catch {
+        rawInput = fs.readFileSync('/dev/stdin', 'utf-8');
+        input = JSON.parse(rawInput);
+    } catch (e) {
+        log(`PARSE_ERROR: ${e.message} raw=${rawInput.slice(0, 200)}`);
         output({ continue: true });
         return;
     }
@@ -131,18 +176,12 @@ function main() {
     const loopCount = input.loop_count || 0;
     const workspaceRoots = input.workspace_roots || [];
 
-    // Debug: log all hook invocations with full input
-    try {
-        const logDir = path.join(CONFIG_DIR, 'logs');
-        fs.mkdirSync(logDir, { recursive: true });
-        fs.appendFileSync(path.join(logDir, 'hooks.log'),
-            `[${new Date().toISOString()}] ${hook} input=${JSON.stringify(input)}\n`
-        );
-    } catch {}
+    log(`${hook} conv=${conversationId} model=${input.model || ''} tool=${input.tool_name || ''} ws=${JSON.stringify(workspaceRoots)}`);
 
     // ─── sessionStart ─────────────────────────────────
     if (hook === 'sessionStart') {
         const serverPid = findServerPid(workspaceRoots);
+        log(`sessionStart: conv=${conversationId} serverPid=${serverPid || 'null'} ws=${JSON.stringify(workspaceRoots)}`);
         const envOutput = serverPid ? { MCP_FEEDBACK_SERVER_PID: String(serverPid) } : {};
 
         // Register session only if server is already running
@@ -159,7 +198,12 @@ function main() {
                         started_at: Date.now(),
                     })
                 );
-            } catch {}
+                log(`  session written: ${conversationId}`);
+            } catch (e) {
+                log(`  session write error: ${e.message}`);
+            }
+        } else {
+            log(`  session NOT written: conv=${conversationId} serverPid=${serverPid || 'null'}`);
         }
 
         // Build additional_context with conversation_id + USAGE RULES
@@ -192,11 +236,13 @@ function main() {
     // ─── stop ─────────────────────────────────────────
     if (hook === 'stop') {
         if (loopCount >= STOP_LOOP_LIMIT) {
+            log('  stop: loop limit reached');
             output({});
             return;
         }
 
         const pending = getPending(conversationId);
+        log(`  stop: pending=${!!hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -208,25 +254,20 @@ function main() {
     }
 
     // ─── preToolUse ───────────────────────────────────
-    // Uses permission/user_message/agent_message per official docs.
-    // Must consume pending here because when preToolUse denies,
-    // beforeShellExecution/beforeMCPExecution won't fire.
+    // Never consume: Cursor ignores preToolUse deny for Shell/MCP tools,
+    // so pending must survive for beforeShellExecution/beforeMCPExecution.
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
         const pending = getPending(conversationId);
+        log(`  preToolUse: tool=${toolName} pending=${!!hasPendingContent(pending)} allowlisted=${isAllowlisted(toolName)}`);
 
         if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            consumePending(conversationId);
-            output({
-                permission: 'deny',
-                user_message: fmtUser(combined),
-                agent_message: fmtAgent(combined),
-            });
+            output({ decision: 'deny', reason: fmtAgent(combined) });
             return;
         }
 
-        output({});
+        output({ decision: 'allow' });
         return;
     }
 
@@ -234,6 +275,7 @@ function main() {
     // Uses permission + user_message + agent_message. Consumes pending.
     if (hook === 'beforeShellExecution') {
         const pending = getPending(conversationId);
+        log(`  beforeShell: pending=${!!hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -249,7 +291,9 @@ function main() {
     }
 
     if (hook === 'beforeMCPExecution') {
+        const mcpTool = input.tool_name || input.mcp_tool_name || '';
         const pending = getPending(conversationId);
+        log(`  beforeMCP: tool=${mcpTool} pending=${!!hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -268,6 +312,7 @@ function main() {
     // Uses permission/user_message per official docs. Consumes pending.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId);
+        log(`  subagentStart: pending=${!!hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);

@@ -71,6 +71,7 @@ export interface FeedbackRequest {
     session_id: string;
     conversation_id?: string;
     project_directory?: string;
+    label?: string;
     summary: string;
 }
 
@@ -91,6 +92,7 @@ export interface SessionUpdate {
         conversation_id: string;
         summary: string;
         model?: string;
+        label?: string;
     };
 }
 

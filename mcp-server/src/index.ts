@@ -6,9 +6,7 @@
  * - interactive_feedback: Request feedback from user, routed by conversation_id
  * - get_system_info: Return system information
  *
- * Routing: conversation_id → session file → server file → port → WebSocket
- * Fallback: CURSOR_TRACE_ID → server file → port
- * Last resort: browser fallback
+ * Routing: project_directory → workspace match (primary), then session file, then CURSOR_TRACE_ID, then single server
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -69,10 +67,30 @@ function isPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
     });
 }
 
+function workspaceMatches(workspaces: string[], projectDir: string): boolean {
+    const normalized = path.normalize(projectDir);
+    for (const w of workspaces) {
+        const wn = path.normalize(w);
+        if (wn === normalized) return true;
+        if (normalized.startsWith(wn + path.sep)) return true;
+    }
+    return false;
+}
+
 // ─── Extension Discovery ─────────────────────────────────
 
-async function findExtensionServer(conversationId?: string): Promise<ServerData | null> {
-    // Strategy 1: conversation_id → session → server
+async function findExtensionServer(conversationId?: string, projectDirectory?: string): Promise<ServerData | null> {
+    // Strategy 1: project_directory → workspace match (definitive, unique per Cursor window)
+    if (projectDirectory) {
+        for (const f of listJSONFiles(SERVERS_DIR)) {
+            const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
+            if (server?.workspaces?.length && workspaceMatches(server.workspaces, projectDirectory) && await isPortOpen(server.port)) {
+                return server;
+            }
+        }
+    }
+
+    // Strategy 2: conversation_id → session → server
     if (conversationId) {
         const session = readJSON<SessionData>(path.join(SESSIONS_DIR, `${conversationId}.json`));
         if (session?.server_pid) {
@@ -83,7 +101,7 @@ async function findExtensionServer(conversationId?: string): Promise<ServerData 
         }
     }
 
-    // Strategy 2: CURSOR_TRACE_ID → server
+    // Strategy 3: CURSOR_TRACE_ID → server (not unique per window on macOS)
     const traceId = process.env.CURSOR_TRACE_ID || '';
     if (traceId) {
         for (const f of listJSONFiles(SERVERS_DIR)) {
@@ -94,7 +112,7 @@ async function findExtensionServer(conversationId?: string): Promise<ServerData 
         }
     }
 
-    // Strategy 3: single server fallback
+    // Strategy 4: single server fallback (last resort)
     const allServers: ServerData[] = [];
     for (const f of listJSONFiles(SERVERS_DIR)) {
         const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
@@ -139,6 +157,7 @@ function requestFeedback(
     conversationId: string,
     summary: string,
     projectDirectory?: string,
+    label?: string,
 ): Promise<{ feedback: string; images?: string[] }> {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -173,6 +192,7 @@ function requestFeedback(
             type: 'feedback_request',
             session_id: sessionId,
             conversation_id: conversationId,
+            label: label || '',
             project_directory: projectDirectory,
             summary,
         }));
@@ -280,6 +300,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                         type: 'string',
                         description: 'Optional. The project directory path.',
                     },
+                    agent_name: {
+                        type: 'string',
+                        description: 'Display name for this conversation tab.',
+                    },
                 },
             },
         },
@@ -316,21 +340,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const parsed = z.object({
             summary: z.string(),
             conversation_id: z.string(),
+            agent_name: z.string().optional(),
             project_directory: z.string().optional(),
         }).parse(args);
 
-        const { summary, conversation_id, project_directory } = parsed;
+        const { summary, conversation_id, agent_name, project_directory } = parsed;
         const sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         try {
             // Find extension and connect
-            const extensionServer = await findExtensionServer(conversation_id);
+            const extensionServer = await findExtensionServer(conversation_id, project_directory);
 
             if (extensionServer) {
                 const ws = await connectToExtension(extensionServer.port);
                 try {
                     const result = await requestFeedback(
-                        ws, sessionId, conversation_id || '', summary, project_directory
+                        ws, sessionId, conversation_id || '', summary, project_directory, agent_name || ''
                     );
                     const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
                         { type: 'text', text: result.feedback },

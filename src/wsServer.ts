@@ -15,6 +15,7 @@ import * as http from 'http';
 import * as fs from 'fs';
 import * as path from 'path';
 import { WebSocket, WebSocketServer } from 'ws';
+import * as os from 'os';
 import type {
     FeedbackRequest,
     FeedbackResponse,
@@ -39,6 +40,22 @@ import {
     getSessionsDir,
     getPendingDir,
 } from './fileStore';
+
+const LOG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'logs');
+function wsLog(msg: string): void {
+    try {
+        fs.mkdirSync(LOG_DIR, { recursive: true });
+        const logFile = path.join(LOG_DIR, 'extension.log');
+        try {
+            const stat = fs.statSync(logFile);
+            if (stat.size > 2 * 1024 * 1024) {
+                try { fs.unlinkSync(logFile + '.old'); } catch {}
+                fs.renameSync(logFile, logFile + '.old');
+            }
+        } catch {}
+        fs.appendFileSync(logFile, `[${new Date().toISOString()}] ${msg}\n`);
+    } catch {}
+}
 
 const VERSION = '2.0.0';
 const PORT_RANGE_START = 48200;
@@ -114,7 +131,7 @@ export class FeedbackWSServer {
         this._watchSessionsDir();
         this._scanExistingSessions();
 
-        // Server started on this.port
+        wsLog(`server started: port=${this.port} pid=${process.pid} ws=${JSON.stringify(this.workspaces)}`);
         return this.port;
     }
 
@@ -231,6 +248,7 @@ export class FeedbackWSServer {
             case 'register':
                 client.clientType = (msg.clientType as string) === 'mcp-server' ? 'mcp-server' : 'webview';
                 client.projectPath = msg.projectPath as string | undefined;
+                wsLog(`client registered: type=${client.clientType} project=${client.projectPath || ''}`);
                 break;
 
             case 'feedback_request':
@@ -276,6 +294,7 @@ export class FeedbackWSServer {
     // ─── Feedback Flow ────────────────────────────────────
 
     private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest): void {
+        wsLog(`feedbackRequest: session=${req.session_id || ''} conv=${req.conversation_id || ''} summary=${(req.summary || '').slice(0, 60)}`);
         const sessionId = req.session_id || this._generateId();
         let conversationId = req.conversation_id || '';
 
@@ -306,7 +325,7 @@ export class FeedbackWSServer {
                 session_id: sessionId,
                 conversation_id: conversationId,
                 summary: req.summary,
-                label: conv?.label,
+                label: req.label || conv?.label,
             },
         });
 
@@ -335,6 +354,7 @@ export class FeedbackWSServer {
 
     private _handleFeedbackResponse(res: FeedbackResponse): void {
         const pending = this.pendingRequests.get(res.session_id);
+        wsLog(`feedbackResponse: session=${res.session_id} found=${!!pending} feedback=${(res.feedback || '').slice(0, 60)} images=${(res.images || []).length}`);
         if (!pending) {
             // No pending request for this session_id
             return;
@@ -354,9 +374,16 @@ export class FeedbackWSServer {
             const conv = readConversation(convId);
             if (conv) {
                 conv.state = 'running';
+                conv.server_pid = process.pid;
                 conv.active_session_id = null;
                 conv.pending_queue = [];
                 writeConversation(conv);
+                // Cancel pending watcher to prevent duplicate pending_delivered broadcast
+                const watcher = this.pendingWatchers.get(convId);
+                if (watcher) {
+                    clearInterval(watcher);
+                    this.pendingWatchers.delete(convId);
+                }
             }
 
             // Clean up pending file to prevent hook double-consumption
@@ -396,6 +423,7 @@ export class FeedbackWSServer {
     // ─── Pending Queue ────────────────────────────────────
 
     private _handleQueuePending(msg: WSMessage): void {
+        wsLog(`queuePending: conv=${msg.conversation_id} comments=${((msg as any).comments || []).length} images=${((msg as any).images || []).length}`);
         const conversationId = msg.conversation_id as string;
         if (!conversationId) { return; }
 
@@ -478,6 +506,7 @@ export class FeedbackWSServer {
 
         let lastKnownComments: string[] = [];
         let lastKnownImages: string[] = [];
+        let lastKnownServerPid: number | null = null;
 
         const timer = setInterval(() => {
             try {
@@ -485,12 +514,16 @@ export class FeedbackWSServer {
                 if (data) {
                     if (data.comments?.length) lastKnownComments = data.comments;
                     if (data.images?.length) lastKnownImages = data.images;
+                    lastKnownServerPid = data?.server_pid ?? null;
                 }
             } catch {}
 
             if (!fs.existsSync(filePath)) {
                 clearInterval(timer);
                 this.pendingWatchers.delete(conversationId);
+                if (lastKnownServerPid !== null && lastKnownServerPid !== process.pid) {
+                    return;
+                }
 
                 const conv = readConversation(conversationId);
                 const deliveredComments = lastKnownComments.length > 0 ? lastKnownComments : (conv ? [...conv.pending_queue] : []);
@@ -569,8 +602,11 @@ export class FeedbackWSServer {
         // Restore conversations from previous lifecycles (matched by workspace)
         const myRoots = new Set(this.workspaces.map(w => w.replace(/\/+$/, '')));
         const restoredConvs = listConversations().filter(c => {
-            if (c.server_pid === process.pid) return false; // already handled above
+            if (c.server_pid === process.pid) return false;
             if (c.state === 'archived') return false;
+            if (c.state && c.state !== 'idle' && c.state !== 'ended' && c.server_pid && c.server_pid !== process.pid) {
+                return false;
+            }
             const convRoots = (c.workspace_roots || []).map(r => r.replace(/\/+$/, ''));
             return convRoots.some(r => myRoots.has(r));
         });
@@ -604,8 +640,11 @@ export class FeedbackWSServer {
     }
 
     private _onSessionRegistered(session: import('./types').SessionRegistration): void {
-        // Only handle sessions for this extension instance
-        if (session.server_pid !== process.pid) { return; }
+        wsLog(`sessionRegistered: conv=${session.conversation_id} pid=${session.server_pid} myPid=${process.pid} model=${session.model}`);
+        if (session.server_pid !== process.pid) {
+            wsLog(`  skipped: pid mismatch`);
+            return;
+        }
 
         // Create or update conversation data
         let conv = readConversation(session.conversation_id);
@@ -670,11 +709,15 @@ export class FeedbackWSServer {
         if (!providedId) return providedId;
 
         // Direct match: conversation or session file exists with this ID
-        if (readConversation(providedId)) return providedId;
-        if (readSession(providedId)) return providedId;
-
-        // No match — use as-is; _ensureConversation will create a new one.
-        // Don't guess/merge with other conversations to avoid cross-contamination.
+        if (readConversation(providedId)) {
+            wsLog(`  resolve: conv match ${providedId}`);
+            return providedId;
+        }
+        if (readSession(providedId)) {
+            wsLog(`  resolve: session match ${providedId}`);
+            return providedId;
+        }
+        wsLog(`  resolve: no match, using as-is ${providedId}`);
         return providedId;
     }
 
@@ -712,6 +755,7 @@ export class FeedbackWSServer {
         }
 
         conv.state = 'waiting';
+        conv.server_pid = process.pid;
         conv.active_session_id = sessionId;
         if (summary) {
             conv.label = label;
@@ -742,7 +786,10 @@ export class FeedbackWSServer {
 
     private _sendConversationsList(ws: WebSocket): void {
         const conversations = listConversations()
-            .filter(c => c.server_pid === process.pid && c.state !== 'archived')
+            .filter(c => {
+                if (c.state === 'archived') return false;
+                return c.server_pid === process.pid;
+            })
             .map(c => ({
                 conversation_id: c.conversation_id,
                 model: c.model,

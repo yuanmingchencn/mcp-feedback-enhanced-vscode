@@ -26,14 +26,16 @@ The extension auto-configures `~/.cursor/mcp.json`:
 {
   "mcpServers": {
     "mcp-feedback-enhanced": {
-      "command": "npx",
-      "args": ["-y", "mcp-feedback-enhanced@latest"],
+      "command": "node",
+      "args": ["~/.vscode/extensions/mcp-feedback.mcp-feedback-enhanced-2.0.8/mcp-server/dist/index.js"],
       "timeout": 86400,
       "autoApprove": ["interactive_feedback"]
     }
   }
 }
 ```
+
+The MCP server is bundled with the extension; the path above uses the VS Code extension directory (use your installed version in place of `2.0.8` if different).
 
 ### 3. Verify Cursor Hooks
 The extension auto-deploys `~/.cursor/hooks.json` with entries for all 6 hook points. This enables real-time pending message injection.
@@ -95,7 +97,7 @@ Each Cursor agent session has a unique UUID. The `sessionStart` hook injects thi
 
 ## For Developers
 
-- **NPM Package**: [`mcp-feedback-enhanced`](https://www.npmjs.com/package/mcp-feedback-enhanced)
+- **Install**: [Open VSX](https://open-vsx.org/extension/atome/mcp-feedback-enhanced) or install via VSIX
 - **Repository**: [GitHub](https://github.com/yuanmingchencn/mcp-feedback-enhanced-vscode)
 
 ---

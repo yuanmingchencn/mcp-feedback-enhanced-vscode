@@ -63,6 +63,10 @@ body{
   box-shadow:0 1px 8px rgba(124,58,237,0.2);
 }
 .tab.ended{opacity:.4;font-style:italic}
+.tab.tab-ended{opacity:.5}
+.tab.tab-ended .dot{background:#666}
+.messages-muted .msg-row{opacity:.6}
+.messages-muted .msg-row .message{filter:grayscale(.3)}
 .tab .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
 .tab .dot.waiting{background:var(--waiting-dot);box-shadow:0 0 6px var(--waiting-dot);animation:glow-pulse 1.5s infinite}
 .tab .dot.running{background:var(--success);box-shadow:0 0 6px var(--success);animation:glow-pulse 2s infinite}
@@ -80,16 +84,11 @@ body{
 
 /* Status Bar */
 .status-bar{
-  display:flex;align-items:center;gap:8px;padding:5px 12px;
+  display:flex;align-items:center;gap:8px;padding:3px 12px;
   font-size:10px;color:var(--fg-dim);
   border-bottom:1px solid var(--border);
-  letter-spacing:.5px;text-transform:uppercase;
   background:var(--surface);
 }
-.status-dot{width:6px;height:6px;border-radius:50%;transition:all .3s}
-.status-dot.connected{background:var(--success);box-shadow:0 0 8px var(--glow-green)}
-.status-dot.connecting{background:var(--waiting-dot);animation:glow-pulse 1s infinite}
-.status-dot.disconnected{background:var(--danger);box-shadow:0 0 6px rgba(239,68,68,0.4)}
 
 /* Messages */
 .messages{
@@ -129,12 +128,12 @@ body{
 }
 .hint-badge{
   display:inline-block;
-  background:rgba(245,158,11,0.1);
-  border:1px solid rgba(245,158,11,0.25);
-  color:#fbbf24;font-size:10px;font-weight:500;
-  padding:2px 8px;border-radius:10px;
-  letter-spacing:.2px;margin-left:6px;
-  vertical-align:middle;
+  background:rgba(100,116,139,0.15);
+  border:1px solid rgba(100,116,139,0.25);
+  color:var(--fg-dim);font-size:9px;font-weight:500;
+  padding:1px 6px;border-radius:8px;
+  letter-spacing:.3px;margin-left:6px;
+  vertical-align:middle;text-transform:uppercase;
 }
 .message .header{display:flex;align-items:center;gap:6px;font-size:10px;color:var(--fg-dim);margin-bottom:5px}
 .message .header .role{font-weight:700;text-transform:uppercase;letter-spacing:.5px}
@@ -312,6 +311,35 @@ body{
   font-size:12px;margin-top:4px;transition:all .2s;
 }
 .settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.12)}
+body.input-hidden .input-area,
+body.input-hidden .quick-replies,
+body.input-hidden .image-previews,
+body.input-hidden .pending-section{display:none!important}
+
+.at-dropdown{
+  display:none;position:absolute;bottom:100%;left:0;right:0;
+  max-height:240px;overflow-y:auto;z-index:100;
+  background:var(--input-bg);border:1px solid var(--border);
+  border-radius:10px 10px 0 0;margin-bottom:-1px;
+  box-shadow:0 -4px 20px rgba(0,0,0,0.3),0 0 1px rgba(124,58,237,0.3);
+  backdrop-filter:blur(12px);
+}
+.at-dropdown.visible{display:block;animation:at-in .15s ease-out}
+@keyframes at-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+.at-dropdown-item{
+  display:flex;align-items:center;gap:8px;padding:7px 12px;
+  cursor:pointer;font-size:12px;transition:background .1s;
+}
+.at-dropdown-item:hover,.at-dropdown-item.active{
+  background:rgba(124,58,237,0.12);
+}
+.at-dropdown-item .kind-icon{
+  width:20px;height:20px;display:flex;align-items:center;justify-content:center;
+  font-size:13px;flex-shrink:0;opacity:.7;
+  background:rgba(124,58,237,0.08);border-radius:5px;
+}
+.at-dropdown-item .at-label{color:var(--fg);font-weight:500}
+.at-dropdown-item .at-detail{color:var(--fg-dim);font-size:10px;margin-left:auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:50%}
 </style>
 </head>
 <body>
@@ -321,8 +349,7 @@ body{
 </div>
 
 <div class="status-bar" id="statusBar">
-  <span class="status-dot disconnected" id="statusDot"></span>
-  <span id="statusText">Connecting...</span>
+  <div style="flex:1"></div>
   <div class="settings-toggle"><button id="settingsBtn" title="Settings">⚙</button></div>
 </div>
 <div class="settings-panel" id="settingsPanel">
@@ -358,10 +385,11 @@ body{
 </div>
 
 <div class="image-previews" id="imagePreviews"></div>
-<div class="input-area">
+<div class="input-area" style="position:relative">
+  <div class="at-dropdown" id="atDropdown"></div>
   <div class="input-row">
     <button class="attach-btn" id="attachBtn" title="Attach image file">📎</button>
-    <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V)" rows="4"></textarea>
+    <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V, @ to reference files)" rows="4"></textarea>
     <button class="send-btn" id="sendBtn" disabled>Send</button>
   </div>
 </div>
@@ -380,8 +408,6 @@ const SESSION_ID = '{{SESSION_ID}}';
 
     const tabBar = document.getElementById('tabBar');
     const tabOverflow = document.getElementById('tabOverflow');
-    const statusDot = document.getElementById('statusDot');
-    const statusText = document.getElementById('statusText');
     const messagesEl = document.getElementById('messages');
     const emptyState = document.getElementById('emptyState');
     const pendingSection = document.getElementById('pendingSection');
@@ -395,6 +421,7 @@ const SESSION_ID = '{{SESSION_ID}}';
     const settingsPanel = document.getElementById('settingsPanel');
     const autoReplyCheck = document.getElementById('autoReplyCheck');
     const autoReplyText = document.getElementById('autoReplyText');
+    const atDropdown = document.getElementById('atDropdown');
 
     const lightbox = document.getElementById('lightbox');
     const lightboxImg = document.getElementById('lightboxImg');
@@ -476,7 +503,8 @@ const SESSION_ID = '{{SESSION_ID}}';
         tabBar.querySelectorAll('.tab').forEach(el => el.remove());
         for (const [id, tab] of tabs) {
             const el = document.createElement('div');
-            el.className = 'tab' + (id === activeTabId ? ' active' : '') + (tab.state === 'ended' ? ' ended' : '');
+            const isEndedOrIdle = tab.state === 'ended' || tab.state === 'idle';
+            el.className = 'tab' + (id === activeTabId ? ' active' : '') + (tab.state === 'ended' ? ' ended' : '') + (isEndedOrIdle ? ' tab-ended' : '');
 
             const dot = document.createElement('span');
             dot.className = 'dot ' + tab.state;
@@ -545,7 +573,13 @@ const SESSION_ID = '{{SESSION_ID}}';
     function renderMessages() {
         messagesEl.innerHTML = '';
         const tab = activeTabId ? tabs.get(activeTabId) : null;
-        if (!tab || tab.messages.length === 0) { emptyState.style.display = 'flex'; return; }
+        if (!tab || tab.messages.length === 0) {
+            emptyState.style.display = 'flex';
+            messagesEl.appendChild(emptyState);
+            const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+            messagesEl.classList.toggle('messages-muted', !!isEndedOrIdle);
+            return;
+        }
         emptyState.style.display = 'none';
 
         for (const msg of tab.messages) {
@@ -563,7 +597,7 @@ const SESSION_ID = '{{SESSION_ID}}';
                 if (msg.pending_delivered) {
                     const badge = document.createElement('span');
                     badge.className = 'hint-badge';
-                    badge.textContent = '📤 pending';
+                    badge.textContent = 'queued';
                     h.appendChild(badge);
                 }
                 if (msg.timestamp) {
@@ -587,6 +621,8 @@ const SESSION_ID = '{{SESSION_ID}}';
             row.appendChild(el);
             messagesEl.appendChild(row);
         }
+        const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+        messagesEl.classList.toggle('messages-muted', !!isEndedOrIdle);
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
@@ -646,10 +682,9 @@ const SESSION_ID = '{{SESSION_ID}}';
         if (!hasText && !hasImages) return;
         const tab = activeTabId ? tabs.get(activeTabId) : null;
         if (!tab) return;
-        if (hasText) tab.pendingQueue.push(text.trim());
+        if (hasText) tab.pendingQueue = [text.trim()];
         if (hasImages) {
-            if (!tab.pendingImages) tab.pendingImages = [];
-            tab.pendingImages.push(...pendingImages);
+            tab.pendingImages = [...pendingImages];
             clearImages();
         }
         syncPending();
@@ -682,6 +717,8 @@ const SESSION_ID = '{{SESSION_ID}}';
         const hasContent = input.value.trim().length > 0 || pendingImages.length > 0;
         const isWaiting = tab && tab.state === 'waiting' && tab.pendingSessionId;
         const isEnded = tab && tab.state === 'ended';
+        const isEndedOrIdle = tab && (tab.state === 'ended' || tab.state === 'idle');
+        document.body.classList.toggle('input-hidden', !!isEndedOrIdle);
         if (isEnded) { sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn'; }
         else if (isWaiting) { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn'; }
         else { sendBtn.disabled = !hasContent; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode'; }
@@ -845,6 +882,121 @@ const SESSION_ID = '{{SESSION_ID}}';
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); smartSend(); }
     });
 
+    // ── @ Reference Autocomplete ─────────────────────────
+    let atSearchTimer = null;
+    let atActiveIndex = -1;
+    let atItems = [];
+    let atVisible = false;
+
+    function getAtQuery() {
+        const pos = input.selectionStart;
+        const text = input.value.substring(0, pos);
+        const match = text.match(/@([^\s]*)$/);
+        return match ? { query: match[1], atPos: pos - match[0].length } : null;
+    }
+
+    function triggerAtSearch() {
+        const result = getAtQuery();
+        if (!result || result.query.length === 0) { hideAtDropdown(); return; }
+        if (vscode) {
+            vscode.postMessage({ type: 'at-search', query: result.query });
+        }
+    }
+
+    function showAtDropdown(items) {
+        atItems = items;
+        atActiveIndex = -1;
+        if (!items || items.length === 0) { hideAtDropdown(); return; }
+        atDropdown.innerHTML = '';
+        items.forEach((item, i) => {
+            const row = document.createElement('div');
+            row.className = 'at-dropdown-item';
+            row.dataset.index = i;
+            const icon = document.createElement('span');
+            icon.className = 'kind-icon';
+            icon.textContent = item.kind === 'file' ? '📄' : '🔣';
+            const label = document.createElement('span');
+            label.className = 'at-label';
+            label.textContent = item.label;
+            const detail = document.createElement('span');
+            detail.className = 'at-detail';
+            detail.textContent = item.detail;
+            row.appendChild(icon);
+            row.appendChild(label);
+            row.appendChild(detail);
+            row.addEventListener('click', () => selectAtItem(i));
+            atDropdown.appendChild(row);
+        });
+        atDropdown.classList.add('visible');
+        atVisible = true;
+    }
+
+    function hideAtDropdown() {
+        atDropdown.classList.remove('visible');
+        atVisible = false;
+        atItems = [];
+        atActiveIndex = -1;
+    }
+
+    function setAtActive(index) {
+        const items = atDropdown.querySelectorAll('.at-dropdown-item');
+        items.forEach(el => el.classList.remove('active'));
+        if (index >= 0 && index < items.length) {
+            atActiveIndex = index;
+            items[index].classList.add('active');
+            items[index].scrollIntoView({ block: 'nearest' });
+        }
+    }
+
+    function selectAtItem(index) {
+        const item = atItems[index];
+        if (!item) return;
+        const result = getAtQuery();
+        if (!result) { hideAtDropdown(); return; }
+        const before = input.value.substring(0, result.atPos);
+        const after = input.value.substring(input.selectionStart);
+        const insert = '@' + item.insertText + ' ';
+        input.value = before + insert + after;
+        const newPos = before.length + insert.length;
+        input.selectionStart = input.selectionEnd = newPos;
+        input.focus();
+        hideAtDropdown();
+        if (activeTabId) {
+            const tab = tabs.get(activeTabId);
+            if (tab) tab.inputDraft = input.value;
+        }
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(saveState, 500);
+    }
+
+    input.addEventListener('input', function atInputHandler() {
+        clearTimeout(atSearchTimer);
+        const result = getAtQuery();
+        if (result && result.query.length > 0) {
+            atSearchTimer = setTimeout(triggerAtSearch, 150);
+        } else {
+            hideAtDropdown();
+        }
+    });
+
+    input.addEventListener('keydown', (e) => {
+        if (!atVisible) return;
+        if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            setAtActive(atActiveIndex < atItems.length - 1 ? atActiveIndex + 1 : 0);
+        } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            setAtActive(atActiveIndex > 0 ? atActiveIndex - 1 : atItems.length - 1);
+        } else if ((e.key === 'Enter' || e.key === 'Tab') && atActiveIndex >= 0) {
+            e.preventDefault();
+            e.stopPropagation();
+            selectAtItem(atActiveIndex);
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            hideAtDropdown();
+        }
+    }, true);
+
     // ── Quick Replies ────────────────────────────────────
     quickReplies.addEventListener('click', (e) => {
         const btn = e.target.closest('.quick-reply-btn');
@@ -892,8 +1044,6 @@ const SESSION_ID = '{{SESSION_ID}}';
     }
 
     function updateStatus(state, text) {
-        statusDot.className = 'status-dot ' + state;
-        statusText.textContent = text;
     }
 
     // ── Message Handling ─────────────────────────────────
@@ -1066,6 +1216,7 @@ const SESSION_ID = '{{SESSION_ID}}';
         const msg = event.data;
         if (msg.type === 'reconnect') { if (ws) { try { ws.close(); } catch {} } ws = null; reconnectAttempts = 0; connect(); }
         else if (msg.type === 'focus-input') input.focus();
+        else if (msg.type === 'at-results') showAtDropdown(msg.items || []);
     });
 
     // ── Heartbeat ────────────────────────────────────────
