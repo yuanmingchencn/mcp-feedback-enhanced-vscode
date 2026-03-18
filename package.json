@@ -86,6 +86,8 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "test:fast": "node --test --test-concurrency=1 tests/hooks.test.js tests/ws-server.test.js tests/panelState.test.js tests/panelState.model.test.js tests/contracts.test.js",
+    "test:ui": "node --test --test-concurrency=1 tests/ui.test.js",
     "lint": "eslint src --ext ts",
     "package": "vsce package --no-dependencies"
   },
