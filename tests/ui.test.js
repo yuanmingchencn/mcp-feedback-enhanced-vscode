@@ -33,7 +33,7 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH) {
 const WebSocket = require('ws');
 const { chromium } = require('@playwright/test');
 const { FeedbackWSServer } = require('../out/wsServer');
-const { writeSession, deleteSession, getSessionsDir } = require('../out/fileStore');
+const { writeSession, deleteSession, getSessionsDir, getPendingDir } = require('../out/fileStore');
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -695,6 +695,732 @@ describe('settings toggle', () => {
             const settingsPanel = await page.$('.settings-panel.visible');
             assert.ok(settingsPanel);
         } finally {
+            await page.close();
+        }
+    });
+});
+
+// ─── Pending Queue Replace Behavior ──────────────────────
+
+describe('pending queue replace behavior', () => {
+    before(async () => {
+        await startServer();
+        await setupBrowser();
+    });
+
+    after(async () => {
+        if (browser) await browser.close();
+        await stopServer();
+        if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    });
+
+    it('second queued message replaces first', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'first message');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+            const firstPending = await page.textContent('.pending-item .text');
+            assert.ok(firstPending && firstPending.includes('first message'));
+
+            await page.fill('#input', 'second message');
+            await page.click('#sendBtn');
+            await yieldToEventLoop(150);
+
+            const pendingText = await page.textContent('.pending-item .text');
+            assert.ok(pendingText && pendingText.includes('second message'));
+            assert.ok(!pendingText.includes('first message'));
+            const pendingCount = await page.textContent('#pendingCount');
+            assert.strictEqual(pendingCount, '1');
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('edit button moves text to input', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'edit me');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+
+            const editBtn = page.locator('.pending-item button[title="Edit"]');
+            await editBtn.click();
+            await yieldToEventLoop(100);
+
+            const inputValue = await page.inputValue('#input');
+            assert.strictEqual(inputValue.trim(), 'edit me');
+            const pendingVisible = await page.locator('.pending-section.visible').count();
+            assert.strictEqual(pendingVisible, 0);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('edit and re-queue replaces', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'original');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+
+            const editBtn = page.locator('.pending-item button[title="Edit"]');
+            await editBtn.click();
+            await yieldToEventLoop(100);
+            await page.fill('#input', 'modified');
+            await page.click('#sendBtn');
+            await yieldToEventLoop(150);
+
+            const pendingText = await page.textContent('.pending-item .text');
+            assert.ok(pendingText && pendingText.includes('modified'));
+            assert.ok(!pendingText.includes('original'));
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('clear button removes all pending', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'something');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+
+            await page.locator('#clearPendingBtn').click();
+            await yieldToEventLoop(100);
+
+            const pendingVisible = await page.locator('.pending-section.visible').count();
+            assert.strictEqual(pendingVisible, 0);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+});
+
+// ─── Tab State Transitions ───────────────────────────────
+
+describe('tab state transitions', () => {
+    before(async () => {
+        await startServer();
+        await setupBrowser();
+    });
+
+    after(async () => {
+        if (browser) await browser.close();
+        await stopServer();
+        if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    });
+
+    it('idle → waiting: feedback_request shows input', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId1 = uniqueId('sess');
+        const sessionId2 = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId1,
+                conversation_id: convId,
+                summary: 'Review my code',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await yieldToEventLoop(100);
+
+            fs.mkdirSync(getSessionsDir(), { recursive: true });
+            writeSession({
+                conversation_id: convId,
+                workspace_roots: ['/test'],
+                model: '',
+                server_pid: process.pid,
+                started_at: Date.now(),
+            });
+            await yieldToEventLoop(100);
+            deleteSession(convId);
+            await yieldToEventLoop(600);
+
+            const hasInputHiddenBefore = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHiddenBefore, true);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId2,
+                conversation_id: convId,
+                summary: 'New request',
+            }));
+            await yieldToEventLoop(200);
+
+            const hasInputHiddenAfter = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHiddenAfter, false);
+            const sendBtnText = await page.textContent('#sendBtn');
+            assert.ok(sendBtnText && sendBtnText.includes('Send'));
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('waiting → running: after feedback_response, input shows Queue mode', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'extra text');
+            await yieldToEventLoop(100);
+
+            const sendBtnText = await page.textContent('#sendBtn');
+            assert.ok(sendBtnText && sendBtnText.includes('Queue'));
+            const hasInputHidden = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHidden, false);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('running → waiting: new feedback_request switches back to Send', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult1 = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult1;
+
+            await yieldToEventLoop(200);
+            const sessionId2 = uniqueId('sess');
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId2,
+                conversation_id: convId,
+                summary: 'New request',
+            }));
+            await yieldToEventLoop(200);
+
+            const sendBtnText = await page.textContent('#sendBtn');
+            assert.ok(sendBtnText && sendBtnText.includes('Send'));
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('running → ended: input hidden, messages muted', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'ok');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            fs.mkdirSync(getSessionsDir(), { recursive: true });
+            writeSession({
+                conversation_id: convId,
+                workspace_roots: ['/test'],
+                model: '',
+                server_pid: process.pid,
+                started_at: Date.now(),
+            });
+            await yieldToEventLoop(100);
+            deleteSession(convId);
+            await yieldToEventLoop(600);
+
+            const hasInputHidden = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHidden, true);
+            const tabEnded = await page.$('.tab.tab-ended, .tab.ended');
+            assert.ok(tabEnded);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('waiting → ended: input hidden even if feedback was never sent', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await yieldToEventLoop(100);
+
+            fs.mkdirSync(getSessionsDir(), { recursive: true });
+            writeSession({
+                conversation_id: convId,
+                workspace_roots: ['/test'],
+                model: '',
+                server_pid: process.pid,
+                started_at: Date.now(),
+            });
+            await yieldToEventLoop(100);
+            deleteSession(convId);
+            await yieldToEventLoop(600);
+
+            const hasInputHidden = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHidden, true);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+});
+
+// ─── Multi-Tab State Isolation ────────────────────────────
+
+describe('multi-tab state isolation', () => {
+    before(async () => {
+        await startServer();
+        await setupBrowser();
+    });
+
+    after(async () => {
+        if (browser) await browser.close();
+        await stopServer();
+        if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    });
+
+    it('each tab maintains independent pending queue', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convA = uniqueId();
+        const convB = uniqueId();
+        const sessionA = uniqueId('sess');
+        const sessionB = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResultA = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionA,
+                conversation_id: convA,
+                summary: 'Tab A',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResultA;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'msg A');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionB,
+                conversation_id: convB,
+                summary: 'Tab B',
+            }));
+            await page.waitForSelector('.tab:nth-of-type(2)', { timeout: 5000 });
+            await page.locator('.tab').filter({ hasText: 'Tab B' }).first().click();
+            await yieldToEventLoop(150);
+
+            const feedbackResultB = waitForMessage(mcpWs, 'feedback_result', 8000);
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResultB;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'msg B');
+            await page.click('#sendBtn');
+            await yieldToEventLoop(150);
+
+            await page.locator('.tab').filter({ hasText: 'Tab A' }).first().click();
+            await yieldToEventLoop(150);
+            const pendingA = await page.textContent('.pending-item .text');
+            assert.ok(pendingA && pendingA.includes('msg A'));
+
+            await page.locator('.tab').filter({ hasText: 'Tab B' }).first().click();
+            await yieldToEventLoop(150);
+            const pendingB = await page.textContent('.pending-item .text');
+            assert.ok(pendingB && pendingB.includes('msg B'));
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('each tab maintains independent input draft', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convA = uniqueId();
+        const convB = uniqueId();
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: uniqueId('sess'),
+                conversation_id: convA,
+                summary: 'Tab A',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: uniqueId('sess'),
+                conversation_id: convB,
+                summary: 'Tab B',
+            }));
+            await page.waitForSelector('.tab:nth-of-type(2)', { timeout: 5000 });
+
+            await page.locator('.tab').filter({ hasText: 'Tab A' }).first().click();
+            await yieldToEventLoop(100);
+            await page.fill('#input', 'draft A');
+            await yieldToEventLoop(100);
+
+            await page.locator('.tab').filter({ hasText: 'Tab B' }).first().click();
+            await yieldToEventLoop(100);
+            await page.fill('#input', 'draft B');
+            await yieldToEventLoop(100);
+
+            await page.locator('.tab').filter({ hasText: 'Tab A' }).first().click();
+            await yieldToEventLoop(100);
+            const inputValue = await page.inputValue('#input');
+            assert.strictEqual(inputValue.trim(), 'draft A');
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+
+    it('ended tab does not affect other tab input', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convA = uniqueId();
+        const convB = uniqueId();
+        const sessionA = uniqueId('sess');
+        const sessionB = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResultA = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionA,
+                conversation_id: convA,
+                summary: 'Tab A',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResultA;
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionB,
+                conversation_id: convB,
+                summary: 'Tab B',
+            }));
+            await page.waitForSelector('.tab:nth-of-type(2)', { timeout: 5000 });
+
+            fs.mkdirSync(getSessionsDir(), { recursive: true });
+            writeSession({
+                conversation_id: convB,
+                workspace_roots: ['/test'],
+                model: '',
+                server_pid: process.pid,
+                started_at: Date.now(),
+            });
+            await yieldToEventLoop(100);
+            deleteSession(convB);
+            await yieldToEventLoop(600);
+
+            await page.locator('.tab').filter({ hasText: 'Tab A' }).first().click();
+            await yieldToEventLoop(150);
+            const hasInputHidden = await page.evaluate(() => document.body.classList.contains('input-hidden'));
+            assert.strictEqual(hasInputHidden, false);
+        } finally {
+            await closeClient(mcpWs);
+            await page.close();
+        }
+    });
+});
+
+// ─── Input Validation ─────────────────────────────────────
+
+describe('input validation', () => {
+    before(async () => {
+        await startServer();
+        await setupBrowser();
+    });
+
+    after(async () => {
+        if (browser) await browser.close();
+        await stopServer();
+        if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    });
+
+    it('send button stays disabled when input is empty', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: uniqueId('sess'),
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await closeClient(mcpWs);
+
+            await page.fill('#input', '');
+            await yieldToEventLoop(100);
+            const sendBtn = await page.$('#sendBtn');
+            const disabled = await sendBtn.getAttribute('disabled');
+            assert.ok(disabled !== null);
+        } finally {
+            await page.close();
+        }
+    });
+
+    it('whitespace-only input does not enable send', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: uniqueId('sess'),
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await closeClient(mcpWs);
+
+            await page.fill('#input', '   ');
+            await yieldToEventLoop(100);
+            const sendBtn = await page.$('#sendBtn');
+            const disabled = await sendBtn.getAttribute('disabled');
+            assert.ok(disabled !== null);
+        } finally {
+            await page.close();
+        }
+    });
+});
+
+// ─── Pending Delivery Notification ────────────────────────
+
+describe('pending delivery notification', () => {
+    before(async () => {
+        await startServer();
+        await setupBrowser();
+    });
+
+    after(async () => {
+        if (browser) await browser.close();
+        await stopServer();
+        if (tempHtmlPath && fs.existsSync(tempHtmlPath)) fs.unlinkSync(tempHtmlPath);
+    });
+
+    it('shows user messages with queued badge when pending is delivered', async () => {
+        tempHtmlPath = await preparePanelHtml(serverPort);
+        const convId = uniqueId();
+        const sessionId = uniqueId('sess');
+
+        const mcpWs = await createMcpClient(serverPort);
+        const page = await createPage(tempHtmlPath);
+        try {
+            await waitForWsConnected(page);
+
+            const feedbackResult = waitForMessage(mcpWs, 'feedback_result', 8000);
+            mcpWs.send(JSON.stringify({
+                type: 'feedback_request',
+                session_id: sessionId,
+                conversation_id: convId,
+                summary: 'Summary',
+            }));
+
+            await page.waitForSelector('.tab', { timeout: 5000 });
+            await page.fill('#input', 'response');
+            await page.click('#sendBtn');
+            await feedbackResult;
+
+            await yieldToEventLoop(200);
+            await page.fill('#input', 'queued message');
+            await page.click('#sendBtn');
+            await page.waitForSelector('.pending-section.visible', { timeout: 3000 });
+
+            const pendingPath = path.join(getPendingDir(), `${convId}.json`);
+            await yieldToEventLoop(600);
+            assert.ok(fs.existsSync(pendingPath));
+            fs.unlinkSync(pendingPath);
+            await yieldToEventLoop(800);
+
+            const hintBadge = await page.locator('.msg-row.user .message .hint-badge').last();
+            await hintBadge.waitFor({ state: 'visible', timeout: 3000 });
+            const badgeText = await hintBadge.textContent();
+            assert.strictEqual(badgeText.trim(), 'queued');
+        } finally {
+            await closeClient(mcpWs);
             await page.close();
         }
     });
