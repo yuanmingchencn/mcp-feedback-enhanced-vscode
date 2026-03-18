@@ -85,6 +85,7 @@
     "esbuild-watch": "npm run esbuild-base -- --sourcemap --watch",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
     "lint": "eslint src --ext ts",
     "package": "vsce package --no-dependencies"
   },
