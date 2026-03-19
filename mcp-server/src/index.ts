@@ -24,6 +24,8 @@ const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
+const FEEDBACK_REMINDER = '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
+
 // ─── File Helpers ─────────────────────────────────────────
 
 interface SessionData {
@@ -358,7 +360,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         ws, sessionId, conversation_id || '', summary, project_directory, agent_name || ''
                     );
                     const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
-                        { type: 'text', text: result.feedback },
+                        { type: 'text', text: result.feedback + FEEDBACK_REMINDER },
                     ];
                     if (result.images) {
                         for (const img of result.images) {
@@ -379,7 +381,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             console.error('[MCP Feedback] No extension found, using browser fallback');
             const feedback = await browserFallback(summary);
             return {
-                content: [{ type: 'text', text: feedback }],
+                content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
             };
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -389,7 +391,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             try {
                 const feedback = await browserFallback(summary);
                 return {
-                    content: [{ type: 'text', text: feedback }],
+                    content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
                 };
             } catch {
                 return {
