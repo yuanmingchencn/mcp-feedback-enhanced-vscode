@@ -126,6 +126,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
+    migratePendingFiles();
 
     context.subscriptions.push(...disposables);
     // Port info available via showStatus command
@@ -199,16 +200,22 @@ function ensureMcpConfig(extensionPath: string): void {
 
 function deployCursorHooks(extensionPath: string): void {
     try {
-        const sourceHook = path.join(extensionPath, 'scripts', 'hooks', 'check-pending.js');
-        if (!fs.existsSync(sourceHook)) {
-            console.warn('[MCP Feedback] Hook script not found:', sourceHook);
-            return;
+        const hooksSourceDir = path.join(extensionPath, 'scripts', 'hooks');
+        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
+        fs.mkdirSync(targetDir, { recursive: true });
+
+        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js'];
+        for (const file of hookFiles) {
+            const src = path.join(hooksSourceDir, file);
+            if (fs.existsSync(src)) {
+                fs.copyFileSync(src, path.join(targetDir, file));
+            }
         }
 
-        const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
-        const targetHook = path.join(targetDir, 'check-pending.js');
-        fs.mkdirSync(targetDir, { recursive: true });
-        fs.copyFileSync(sourceHook, targetHook);
+        try { fs.unlinkSync(path.join(targetDir, 'check-pending.js')); } catch { /* old file gone */ }
+
+        const sessionStartHook = path.join(targetDir, 'session-start.js');
+        const preToolUseHook = path.join(targetDir, 'consume-pending.js');
 
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
@@ -220,19 +227,21 @@ function deployCursorHooks(extensionPath: string): void {
         if (!hooksConfig.version) { hooksConfig.version = 1; }
 
         const hooks = (hooksConfig.hooks || {}) as Record<string, Array<Record<string, unknown>>>;
-        const hookPoints = ['sessionStart'];
-        const hookCommand = `node ${targetHook}`;
         const SOURCE_TAG = 'mcp-feedback-enhanced';
-
         const LEGACY_TAGS = ['mcp-feedback-v2'];
 
-        for (const event of hookPoints) {
+        const hookEntries: Record<string, string> = {
+            sessionStart: `node ${sessionStartHook}`,
+            preToolUse: `node ${preToolUseHook}`,
+        };
+
+        for (const [event, command] of Object.entries(hookEntries)) {
             if (!hooks[event]) { hooks[event] = []; }
             hooks[event] = hooks[event].filter(h =>
                 h._source !== SOURCE_TAG && !LEGACY_TAGS.includes(h._source as string)
             );
             hooks[event].push({
-                command: hookCommand,
+                command,
                 _source: SOURCE_TAG,
             });
         }
@@ -240,8 +249,23 @@ function deployCursorHooks(extensionPath: string): void {
         hooksConfig.hooks = hooks;
         fs.mkdirSync(path.dirname(hooksConfigPath), { recursive: true });
         fs.writeFileSync(hooksConfigPath, JSON.stringify(hooksConfig, null, 2));
-        // Hooks deployed
     } catch (e) {
         console.error('[MCP Feedback] Failed to deploy hooks:', e);
     }
+}
+
+function migratePendingFiles(): void {
+    try {
+        const pendingDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'pending');
+        if (!fs.existsSync(pendingDir)) return;
+        const files = fs.readdirSync(pendingDir).filter(f => f.endsWith('.json'));
+        if (files.length === 0) {
+            fs.rmdirSync(pendingDir);
+            return;
+        }
+        for (const f of files) {
+            try { fs.unlinkSync(path.join(pendingDir, f)); } catch { /* ignore */ }
+        }
+        try { fs.rmdirSync(pendingDir); } catch { /* ignore */ }
+    } catch { /* ignore */ }
 }

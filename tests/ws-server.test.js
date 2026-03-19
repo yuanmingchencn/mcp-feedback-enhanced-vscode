@@ -20,7 +20,26 @@ process.env.HOME = testConfigDir;
 
 const WebSocket = require('ws');
 const { FeedbackWSServer } = require('../out/wsServer');
-const { getPendingDir, readPending, readConversation, listConversations } = require('../out/fileStore');
+const { readConversation, listConversations } = require('../out/fileStore');
+const http = require('http');
+
+// ─── HTTP Helper ──────────────────────────────────────────
+
+function httpGet(port, urlPath) {
+    return new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${port}${urlPath}`, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve({ status: res.statusCode, data: JSON.parse(body) });
+                } catch {
+                    resolve({ status: res.statusCode, data: null });
+                }
+            });
+        }).on('error', reject);
+    });
+}
 
 // ─── WebSocket Client Helpers ─────────────────────────────
 
@@ -372,7 +391,7 @@ describe('pending queue', () => {
         await stopServer();
     });
 
-    it('writes pending file on queue-pending', async () => {
+    it('stores pending in memory on queue-pending', async () => {
         await startFreshServer();
         const convId = uniqueId();
         const comments = ['comment one', 'comment two'];
@@ -381,17 +400,15 @@ describe('pending queue', () => {
         try {
             webviewWs.send(JSON.stringify({ type: 'register', clientType: 'webview' }));
 
-            const pendingSynced = sendAndWait(webviewWs, {
+            await sendAndWait(webviewWs, {
                 type: 'queue-pending',
                 conversation_id: convId,
                 comments,
             }, 'pending_synced');
 
-            await pendingSynced;
-            const pending = readPending(convId);
-            assert.ok(pending);
-            assert.deepStrictEqual(pending.comments, comments);
-            assert.strictEqual(pending.conversation_id, convId);
+            const pending = await httpGet(serverPort, `/pending/${convId}`);
+            assert.strictEqual(pending.status, 200);
+            assert.deepStrictEqual(pending.data.comments, comments);
         } finally {
             await closeClient(webviewWs);
         }
@@ -420,7 +437,7 @@ describe('pending queue', () => {
         }
     });
 
-    it('detects hook consumption and broadcasts pending_delivered', async () => {
+    it('HTTP consume triggers pending_delivered broadcast', async () => {
         await startFreshServer();
         const convId = uniqueId();
         const comments = ['comment for hook'];
@@ -435,12 +452,10 @@ describe('pending queue', () => {
                 comments,
             }, 'pending_synced');
 
-            const pendingPath = path.join(getPendingDir(), `${convId}.json`);
-            assert.ok(fs.existsSync(pendingPath));
-
-            await new Promise((r) => setTimeout(r, 600));
             const pendingDelivered = waitForMessage(webviewWs, 'pending_delivered', 3000);
-            fs.unlinkSync(pendingPath);
+            const consumeResult = await httpGet(serverPort, `/pending/${encodeURIComponent(convId)}?consume=1`);
+            assert.strictEqual(consumeResult.status, 200);
+            assert.deepStrictEqual(consumeResult.data.comments, comments);
 
             const msg = await pendingDelivered;
             assert.strictEqual(msg.type, 'pending_delivered');
@@ -473,8 +488,8 @@ describe('pending queue', () => {
 
             assert.strictEqual(msg.type, 'pending_synced');
             assert.deepStrictEqual(msg.comments, []);
-            const pending = readPending(convId);
-            assert.strictEqual(pending, null);
+            const pending = await httpGet(serverPort, `/pending/${convId}`);
+            assert.strictEqual(pending.status, 404);
         } finally {
             await closeClient(webviewWs);
         }

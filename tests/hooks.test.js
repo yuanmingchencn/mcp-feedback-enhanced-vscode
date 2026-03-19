@@ -1,14 +1,16 @@
 const { describe, it, before, after, beforeEach } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawn } = require('node:child_process');
+const { execFileSync, execFile, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
+const http = require('node:http');
 
-const HOOK_SCRIPT = path.join(__dirname, '..', 'scripts', 'hooks', 'check-pending.js');
+const SESSION_HOOK = path.join(__dirname, '..', 'scripts', 'hooks', 'session-start.js');
+const CONSUME_HOOK = path.join(__dirname, '..', 'scripts', 'hooks', 'consume-pending.js');
 
-function runHook(input, homeDir, extraEnv = {}) {
-    const result = execFileSync('node', [HOOK_SCRIPT], {
+function runHook(script, input, homeDir, extraEnv = {}) {
+    const result = execFileSync('node', [script], {
         input: JSON.stringify(input),
         encoding: 'utf-8',
         env: { ...process.env, HOME: homeDir, ...extraEnv },
@@ -17,41 +19,69 @@ function runHook(input, homeDir, extraEnv = {}) {
     return JSON.parse(result);
 }
 
+function runHookAsync(script, input, homeDir, extraEnv = {}) {
+    return new Promise((resolve, reject) => {
+        const child = execFile('node', [script], {
+            encoding: 'utf-8',
+            env: { ...process.env, HOME: homeDir, ...extraEnv },
+            timeout: 5000,
+        }, (err, stdout) => {
+            if (err) return reject(err);
+            try { resolve(JSON.parse(stdout)); }
+            catch (e) { reject(new Error(`Parse error: ${e.message}, stdout: ${stdout}`)); }
+        });
+        child.stdin.write(JSON.stringify(input));
+        child.stdin.end();
+    });
+}
+
 function setupConfigDirs(homeDir) {
     const configDir = path.join(homeDir, '.config', 'mcp-feedback-enhanced');
-    const dirs = ['sessions', 'pending', 'servers', 'logs', 'conversations'];
+    const dirs = ['sessions', 'servers', 'logs', 'conversations'];
     for (const d of dirs) {
         fs.mkdirSync(path.join(configDir, d), { recursive: true });
     }
     return configDir;
 }
 
-function writePending(configDir, convId, comments, images) {
-    fs.writeFileSync(
-        path.join(configDir, 'pending', `${convId}.json`),
-        JSON.stringify({ conversation_id: convId, server_pid: 1, comments: comments || [], images: images || [], timestamp: Date.now() })
-    );
-}
-
-function writeServer(configDir, pid, workspaces, cursorTraceId) {
+function writeServer(configDir, pid, workspaces, cursorTraceId, port) {
     fs.writeFileSync(
         path.join(configDir, 'servers', `${pid}.json`),
-        JSON.stringify({ port: 48200, pid, workspaces: workspaces || [], cursorTraceId: cursorTraceId || '', version: '2.0.0' })
+        JSON.stringify({ port: port || 48200, pid, workspaces: workspaces || [], cursorTraceId: cursorTraceId || '', version: '2.0.0' })
     );
-}
-
-function pendingExists(configDir, convId) {
-    return fs.existsSync(path.join(configDir, 'pending', `${convId}.json`));
 }
 
 function sessionExists(configDir, convId) {
     return fs.existsSync(path.join(configDir, 'sessions', `${convId}.json`));
 }
 
-function spawnAliveProcess() {
-    const child = spawn('node', ['-e', 'setInterval(()=>{},1e9)'], { detached: true, stdio: 'ignore' });
-    child.unref();
-    return child.pid;
+function startMockServer(pendingData) {
+    return new Promise((resolve) => {
+        const server = http.createServer((req, res) => {
+            const url = new URL(req.url, `http://127.0.0.1`);
+            const pendingMatch = url.pathname.match(/^\/pending\/(.+)$/);
+            res.setHeader('Content-Type', 'application/json');
+            if (pendingMatch) {
+                const convId = decodeURIComponent(pendingMatch[1]);
+                const entry = pendingData[convId];
+                const consume = url.searchParams.get('consume') === '1';
+                if (entry) {
+                    if (consume) delete pendingData[convId];
+                    res.writeHead(200);
+                    res.end(JSON.stringify(entry));
+                } else {
+                    res.writeHead(404);
+                    res.end(JSON.stringify({ error: 'no_pending' }));
+                }
+            } else {
+                res.writeHead(404);
+                res.end(JSON.stringify({ error: 'not_found' }));
+            }
+        });
+        server.listen(0, '127.0.0.1', () => {
+            resolve({ server, port: server.address().port });
+        });
+    });
 }
 
 describe('sessionStart', () => {
@@ -68,18 +98,16 @@ describe('sessionStart', () => {
     });
 
     beforeEach(() => {
-        for (const d of ['sessions', 'pending']) {
-            const dir = path.join(configDir, d);
-            if (fs.existsSync(dir)) {
-                for (const f of fs.readdirSync(dir)) {
-                    fs.unlinkSync(path.join(dir, f));
-                }
+        const dir = path.join(configDir, 'sessions');
+        if (fs.existsSync(dir)) {
+            for (const f of fs.readdirSync(dir)) {
+                fs.unlinkSync(path.join(dir, f));
             }
         }
     });
 
     it('returns continue with additional_context containing usage rules', () => {
-        const result = runHook({ hook_event_name: 'sessionStart' }, tempDir);
+        const result = runHook(SESSION_HOOK, { hook_event_name: 'sessionStart' }, tempDir);
         assert.strictEqual(result.continue, true);
         assert.ok(result.additional_context);
         assert.ok(result.additional_context.includes('[MCP Feedback Enhanced] USAGE RULES:'));
@@ -87,7 +115,7 @@ describe('sessionStart', () => {
     });
 
     it('injects conversation_id instruction when provided', () => {
-        const result = runHook({ hook_event_name: 'sessionStart', conversation_id: 'conv-123' }, tempDir);
+        const result = runHook(SESSION_HOOK, { hook_event_name: 'sessionStart', conversation_id: 'conv-123' }, tempDir);
         assert.strictEqual(result.continue, true);
         assert.ok(result.additional_context.includes('Your conversation ID: conv-123'));
         assert.ok(result.additional_context.includes('conversation_id="conv-123"'));
@@ -95,7 +123,7 @@ describe('sessionStart', () => {
 
     it('writes session file when server is found', () => {
         writeServer(configDir, process.pid, [path.resolve('/workspace')]);
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-session',
             workspace_roots: [path.resolve('/workspace')],
@@ -106,7 +134,7 @@ describe('sessionStart', () => {
 
     it('includes env.MCP_FEEDBACK_SERVER_PID when server is found', () => {
         writeServer(configDir, process.pid, [path.resolve('/workspace')]);
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-env',
             workspace_roots: [path.resolve('/workspace')],
@@ -115,22 +143,47 @@ describe('sessionStart', () => {
         assert.strictEqual(result.env.MCP_FEEDBACK_SERVER_PID, String(process.pid));
     });
 
-    it('delivers pending content in additional_context', () => {
-        writePending(configDir, 'conv-pending', ['User says hello'], []);
-        const result = runHook({ hook_event_name: 'sessionStart', conversation_id: 'conv-pending' }, tempDir);
-        assert.strictEqual(result.continue, true);
-        assert.ok(result.additional_context.includes('User says hello'));
-        assert.ok(result.additional_context.includes('[Pending User Message]'));
+    it('delivers pending content via HTTP in additional_context', async () => {
+        const pendingData = { 'conv-pending': { comments: ['User says hello'], images: [] } };
+        const { server, port } = await startMockServer(pendingData);
+        try {
+            writeServer(configDir, process.pid, ['/ws'], '', port);
+            const result = await runHookAsync(SESSION_HOOK, {
+                hook_event_name: 'sessionStart',
+                conversation_id: 'conv-pending',
+                workspace_roots: ['/ws'],
+            }, tempDir);
+            assert.strictEqual(result.continue, true);
+            assert.ok(result.additional_context.includes('User says hello'));
+            assert.ok(result.additional_context.includes('[Pending User Message]'));
+        } finally {
+            server.close();
+        }
     });
 
-    it('consumes pending file after delivery', () => {
-        writePending(configDir, 'conv-consume', ['Feedback here'], []);
-        runHook({ hook_event_name: 'sessionStart', conversation_id: 'conv-consume' }, tempDir);
-        assert.strictEqual(pendingExists(configDir, 'conv-consume'), false);
+    it('consumes pending via HTTP after delivery', async () => {
+        const pendingData = { 'conv-consume': { comments: ['Feedback here'], images: [] } };
+        const { server, port } = await startMockServer(pendingData);
+        try {
+            writeServer(configDir, process.pid, ['/ws'], '', port);
+            await runHookAsync(SESSION_HOOK, {
+                hook_event_name: 'sessionStart',
+                conversation_id: 'conv-consume',
+                workspace_roots: ['/ws'],
+            }, tempDir);
+            assert.strictEqual(pendingData['conv-consume'], undefined);
+        } finally {
+            server.close();
+        }
+    });
+
+    it('ignores non-sessionStart events', () => {
+        const result = runHook(SESSION_HOOK, { hook_event_name: 'beforeShellExecution', conversation_id: 'conv-x' }, tempDir);
+        assert.deepStrictEqual(result, { continue: true });
     });
 });
 
-describe('beforeShellExecution', () => {
+describe('preToolUse (consume-pending)', () => {
     let tempDir;
     let configDir;
 
@@ -143,60 +196,65 @@ describe('beforeShellExecution', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    it('passes through when no pending', () => {
-        const result = runHook({ hook_event_name: 'beforeShellExecution', conversation_id: 'conv-none' }, tempDir);
+    it('passes through when no server pid', () => {
+        const result = runHook(CONSUME_HOOK, {
+            hook_event_name: 'preToolUse',
+            tool_name: 'Shell',
+            conversation_id: 'conv-1',
+        }, tempDir);
         assert.deepStrictEqual(result, {});
     });
 
-    it('denies with permission/user_message/agent_message when pending', () => {
-        writePending(configDir, 'conv-shell', ['No shell please'], []);
-        const result = runHook({ hook_event_name: 'beforeShellExecution', conversation_id: 'conv-shell' }, tempDir);
-        assert.strictEqual(result.permission, 'deny');
-        assert.ok(result.user_message);
-        assert.ok(result.user_message.includes('No shell please'));
-        assert.ok(result.agent_message);
-        assert.ok(result.agent_message.includes('[User Feedback]'));
+    it('passes through for allowlisted tools', async () => {
+        const pendingData = { 'conv-allow': { comments: ['msg'], images: [] } };
+        const { server, port } = await startMockServer(pendingData);
+        try {
+            writeServer(configDir, process.pid, [], '', port);
+            const result = await runHookAsync(CONSUME_HOOK, {
+                hook_event_name: 'preToolUse',
+                tool_name: 'interactive_feedback',
+                conversation_id: 'conv-allow',
+            }, tempDir, { MCP_FEEDBACK_SERVER_PID: String(process.pid) });
+            assert.deepStrictEqual(result, {});
+            assert.ok(pendingData['conv-allow'], 'pending should not be consumed for allowlisted tool');
+        } finally {
+            server.close();
+        }
     });
 
-    it('consumes pending file after deny', () => {
-        writePending(configDir, 'conv-shell-consume', ['Shell feedback'], []);
-        runHook({ hook_event_name: 'beforeShellExecution', conversation_id: 'conv-shell-consume' }, tempDir);
-        assert.strictEqual(pendingExists(configDir, 'conv-shell-consume'), false);
-    });
-});
-
-describe('beforeMCPExecution', () => {
-    let tempDir;
-    let configDir;
-
-    before(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-test-'));
-        configDir = setupConfigDirs(tempDir);
-    });
-
-    after(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it('passes through when no pending', () => {
-        const result = runHook({ hook_event_name: 'beforeMCPExecution', conversation_id: 'conv-none' }, tempDir);
-        assert.deepStrictEqual(result, {});
+    it('denies with user feedback when pending exists', async () => {
+        const pendingData = { 'conv-deny': { comments: ['Stop using tools'], images: [] } };
+        const { server, port } = await startMockServer(pendingData);
+        try {
+            writeServer(configDir, process.pid, [], '', port);
+            const result = await runHookAsync(CONSUME_HOOK, {
+                hook_event_name: 'preToolUse',
+                tool_name: 'Shell',
+                conversation_id: 'conv-deny',
+            }, tempDir, { MCP_FEEDBACK_SERVER_PID: String(process.pid) });
+            assert.strictEqual(result.permission, 'deny');
+            assert.ok(result.agent_message.includes('[User Feedback]'));
+            assert.ok(result.agent_message.includes('Stop using tools'));
+            assert.strictEqual(pendingData['conv-deny'], undefined);
+        } finally {
+            server.close();
+        }
     });
 
-    it('denies with permission/user_message/agent_message when pending', () => {
-        writePending(configDir, 'conv-mcp', ['No MCP please'], []);
-        const result = runHook({ hook_event_name: 'beforeMCPExecution', conversation_id: 'conv-mcp' }, tempDir);
-        assert.strictEqual(result.permission, 'deny');
-        assert.ok(result.user_message);
-        assert.ok(result.user_message.includes('No MCP please'));
-        assert.ok(result.agent_message);
-        assert.ok(result.agent_message.includes('[User Feedback]'));
-    });
-
-    it('consumes pending file after deny', () => {
-        writePending(configDir, 'conv-mcp-consume', ['MCP feedback'], []);
-        runHook({ hook_event_name: 'beforeMCPExecution', conversation_id: 'conv-mcp-consume' }, tempDir);
-        assert.strictEqual(pendingExists(configDir, 'conv-mcp-consume'), false);
+    it('passes through when no pending', async () => {
+        const pendingData = {};
+        const { server, port } = await startMockServer(pendingData);
+        try {
+            writeServer(configDir, process.pid, [], '', port);
+            const result = await runHookAsync(CONSUME_HOOK, {
+                hook_event_name: 'preToolUse',
+                tool_name: 'Shell',
+                conversation_id: 'conv-empty',
+            }, tempDir, { MCP_FEEDBACK_SERVER_PID: String(process.pid) });
+            assert.deepStrictEqual(result, {});
+        } finally {
+            server.close();
+        }
     });
 });
 
@@ -233,7 +291,7 @@ describe('server matching', () => {
         const wsB = '/workspace/b';
         writeServer(configDir, process.pid, [wsA]);
         writeServer(configDir, extraPid, [wsB]);
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-ws',
             workspace_roots: [wsB],
@@ -245,7 +303,7 @@ describe('server matching', () => {
         const traceId = 'trace-xyz-123';
         writeServer(configDir, process.pid, ['/ws/p1'], 'trace-other');
         writeServer(configDir, extraPid, ['/ws/p2'], traceId);
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-trace',
             workspace_roots: ['/ws/other'],
@@ -256,7 +314,7 @@ describe('server matching', () => {
     it('falls back to first server when no match', () => {
         writeServer(configDir, process.pid, ['/ws/1']);
         writeServer(configDir, extraPid, ['/ws/2']);
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-fallback',
             workspace_roots: ['/ws/other'],
@@ -265,7 +323,7 @@ describe('server matching', () => {
     });
 
     it('returns null when no servers', () => {
-        const result = runHook({
+        const result = runHook(SESSION_HOOK, {
             hook_event_name: 'sessionStart',
             conversation_id: 'conv-noserver',
             workspace_roots: ['/any'],
@@ -290,7 +348,7 @@ describe('logging', () => {
     });
 
     it('creates hooks.log with entries', () => {
-        runHook({ hook_event_name: 'sessionStart', conversation_id: 'conv-log' }, tempDir);
+        runHook(SESSION_HOOK, { hook_event_name: 'sessionStart', conversation_id: 'conv-log' }, tempDir);
         assert.ok(fs.existsSync(logFile));
         const content = fs.readFileSync(logFile, 'utf-8');
         assert.ok(content.includes('sessionStart'));

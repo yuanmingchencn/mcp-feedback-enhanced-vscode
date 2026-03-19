@@ -39,15 +39,6 @@ export interface SessionRegistration {
     started_at: number;
 }
 
-// Persisted in pending/<conversation_id>.json
-export interface PendingData {
-    conversation_id: string;
-    server_pid: number;
-    comments: string[];
-    images?: string[];
-    timestamp: number;
-}
-
 // Persisted in servers/<pid>.json (written by extension)
 export interface ServerInfo {
     port: number;

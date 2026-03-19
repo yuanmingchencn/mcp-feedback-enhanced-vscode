@@ -29,11 +29,8 @@ import {
     writeServer,
     deleteServer,
     readConversation,
-    deletePending,
     cleanupStaleServers,
     cleanupStaleSessions,
-    cleanupStalePending,
-    cleanupLegacyPending,
 } from '../fileStore';
 import { ConversationStore } from './conversationStore';
 import { FeedbackManager } from './feedbackManager';
@@ -93,7 +90,7 @@ export class WsHub {
     constructor() {
         this.conversations = new ConversationStore(process.pid, []);
         this.feedback = new FeedbackManager();
-        this.pending = new PendingManager(process.pid);
+        this.pending = new PendingManager();
         this.sessions = new SessionWatcher(process.pid);
 
         this.pending.onPendingDelivered((delivery) => {
@@ -152,8 +149,6 @@ export class WsHub {
 
         cleanupStaleServers();
         cleanupStaleSessions();
-        cleanupStalePending();
-        cleanupLegacyPending();
 
         this.port = await this._findPort();
         await this._startServer();
@@ -209,11 +204,55 @@ export class WsHub {
 
     private _startServer(): Promise<void> {
         return new Promise((resolve) => {
-            this.server = http.createServer();
+            this.server = http.createServer((req, res) => this._handleHttpRequest(req, res));
             this.wss = new WebSocketServer({ server: this.server });
             this.wss.on('connection', (ws) => this._handleConnection(ws));
             this.server.listen(this.port, '127.0.0.1', () => resolve());
         });
+    }
+
+    private _handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
+        const url = new URL(req.url || '/', `http://127.0.0.1:${this.port}`);
+        const pathname = url.pathname;
+
+        res.setHeader('Content-Type', 'application/json');
+
+        if (req.method === 'GET' && pathname === '/health') {
+            res.writeHead(200);
+            res.end(JSON.stringify({ ok: true, port: this.port, pid: process.pid, version: VERSION }));
+            return;
+        }
+
+        const pendingMatch = pathname.match(/^\/pending\/(.+)$/);
+        if (req.method === 'GET' && pendingMatch) {
+            const conversationId = decodeURIComponent(pendingMatch[1]);
+            const consume = url.searchParams.get('consume') === '1';
+
+            if (consume) {
+                const entry = this.pending.consume(conversationId);
+                if (entry) {
+                    wsLog(`HTTP consume pending: conv=${conversationId} comments=${entry.comments.length}`);
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
+                } else {
+                    res.writeHead(404);
+                    res.end(JSON.stringify({ error: 'no_pending' }));
+                }
+            } else {
+                const entry = this.pending.read(conversationId);
+                if (entry) {
+                    res.writeHead(200);
+                    res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
+                } else {
+                    res.writeHead(404);
+                    res.end(JSON.stringify({ error: 'no_pending' }));
+                }
+            }
+            return;
+        }
+
+        res.writeHead(404);
+        res.end(JSON.stringify({ error: 'not_found' }));
     }
 
     private _registerServer(): void {
@@ -391,8 +430,7 @@ export class WsHub {
                 images: res.images,
             });
             this.conversations.markRunning(convId);
-            this.pending.cancelWatch(convId);
-            deletePending(convId);
+            this.pending.clear(convId);
         }
 
         const feedbackWithReminder = res.feedback + FEEDBACK_REMINDER;
@@ -443,8 +481,7 @@ export class WsHub {
     private _handleCloseTab(conversationId: string): void {
         if (!conversationId) return;
         this.conversations.markArchived(conversationId);
-        this.pending.cancelWatch(conversationId);
-        deletePending(conversationId);
+        this.pending.clear(conversationId);
         this.feedback.resolveByConversation(conversationId, { feedback: '[Tab closed by user]' });
 
         this._broadcastToWebviews({
@@ -453,7 +490,7 @@ export class WsHub {
         });
     }
 
-    // ── Pending Delivery (from file watcher) ────────────────
+    // ── Pending Delivery (from HTTP consume) ─────────────────
 
     private _onPendingDelivered(conversationId: string, comments: string[], images: string[]): void {
         const conv = this.conversations.getConversation(conversationId);

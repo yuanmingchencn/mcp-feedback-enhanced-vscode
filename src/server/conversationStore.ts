@@ -9,7 +9,6 @@ import {
     writeConversation,
     listConversations,
     readSession,
-    readPending,
 } from '../fileStore';
 
 export class ConversationStore {
@@ -174,9 +173,7 @@ export class ConversationStore {
             conv.state = 'idle';
             conv.active_session_id = null;
         }
-        if (conv.pending_queue.length > 0 && !readPending(conv.conversation_id)) {
-            conv.pending_queue = [];
-        }
+        conv.pending_queue = [];
         writeConversation(conv);
     }
 

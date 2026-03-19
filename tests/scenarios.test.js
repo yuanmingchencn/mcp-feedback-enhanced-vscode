@@ -19,7 +19,8 @@ process.env.HOME = testConfigDir;
 
 const WebSocket = require('ws');
 const { FeedbackWSServer } = require('../out/wsServer');
-const { getPendingDir, readPending, readConversation } = require('../out/fileStore');
+const { readConversation } = require('../out/fileStore');
+const http = require('http');
 const { PanelState } = require('../static/panelState');
 
 // ── Helpers ─────────────────────────────────────────────
@@ -31,6 +32,19 @@ function uid(prefix = 'conv') {
 
 function sleep(ms) {
     return new Promise((r) => setTimeout(r, ms));
+}
+
+function httpGet(urlPort, urlPath) {
+    return new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${urlPort}${urlPath}`, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try { resolve({ status: res.statusCode, data: JSON.parse(body) }); }
+                catch { resolve({ status: res.statusCode, data: null }); }
+            });
+        }).on('error', reject);
+    });
 }
 
 // ── SimulatedMcp ────────────────────────────────────────
@@ -246,9 +260,9 @@ describe('scenario: pending after session_start', () => {
         await wv.waitFor('pending_synced');
         assert.deepStrictEqual(tab.pendingQueue, ['Pending A', 'Pending B']);
 
-        const pending = readPending(c);
-        assert.ok(pending);
-        assert.deepStrictEqual(pending.comments, ['Pending A', 'Pending B']);
+        const pending = await httpGet(port, `/pending/${encodeURIComponent(c)}`);
+        assert.strictEqual(pending.status, 200);
+        assert.deepStrictEqual(pending.data.comments, ['Pending A', 'Pending B']);
 
         const s2 = uid('s');
         rP = mcp.waitFor('feedback_result');
@@ -323,7 +337,7 @@ describe('scenario: pending CRUD', () => {
         assert.deepStrictEqual(wv.tab(c).pendingQueue, ['Keep', 'Keep2']);
     });
 
-    it('clear all empties queue and deletes file', async () => {
+    it('clear all empties queue and clears in-memory pending', async () => {
         const c = await setup();
         wv.exec(wv.state.addToPending('A', []));
         await wv.waitFor('pending_synced');
@@ -334,7 +348,8 @@ describe('scenario: pending CRUD', () => {
         await wv.waitFor('pending_synced');
 
         assert.deepStrictEqual(wv.tab(c).pendingQueue, []);
-        assert.strictEqual(readPending(c), null);
+        const pending = await httpGet(port, `/pending/${encodeURIComponent(c)}`);
+        assert.strictEqual(pending.status, 404);
     });
 });
 
@@ -343,7 +358,7 @@ describe('scenario: pending with images', () => {
     before(start);
     after(async () => { await mcp?.close(); await wv?.close(); await stop(); });
 
-    it('staged images travel with pending to disk', async () => {
+    it('staged images travel with pending to in-memory store', async () => {
         mcp = new SimulatedMcp(); wv = new SimulatedWebview();
         await mcp.connect(port); await wv.connect(port);
 
@@ -360,21 +375,21 @@ describe('scenario: pending with images', () => {
         wv.exec(wv.state.addToPending('With img', staged));
         await wv.waitFor('pending_synced');
 
-        const p = readPending(c);
-        assert.ok(p);
-        assert.deepStrictEqual(p.comments, ['With img']);
-        assert.ok(Array.isArray(p.images));
-        assert.strictEqual(p.images.length, 1);
-        assert.strictEqual(p.images[0], img);
+        const p = await httpGet(port, `/pending/${encodeURIComponent(c)}`);
+        assert.strictEqual(p.status, 200);
+        assert.deepStrictEqual(p.data.comments, ['With img']);
+        assert.ok(Array.isArray(p.data.images));
+        assert.strictEqual(p.data.images.length, 1);
+        assert.strictEqual(p.data.images[0], img);
     });
 });
 
-describe('scenario: hook consumption delivers pending', () => {
+describe('scenario: HTTP consume delivers pending', () => {
     let mcp, wv;
     before(start);
     after(async () => { await mcp?.close(); await wv?.close(); await stop(); });
 
-    it('deleting file triggers pending_delivered', async () => {
+    it('HTTP consume triggers pending_delivered broadcast', async () => {
         mcp = new SimulatedMcp(); wv = new SimulatedWebview();
         await mcp.connect(port); await wv.connect(port);
 
@@ -389,12 +404,10 @@ describe('scenario: hook consumption delivers pending', () => {
         await wv.waitFor('pending_synced');
         await sleep(50);
 
-        const pp = path.join(getPendingDir(), `${c}.json`);
-        assert.ok(fs.existsSync(pp));
-
-        await sleep(600);
         const dP = wv.waitFor('pending_delivered', 3000);
-        fs.unlinkSync(pp);
+        const consumeResult = await httpGet(port, `/pending/${encodeURIComponent(c)}?consume=1`);
+        assert.strictEqual(consumeResult.status, 200);
+        assert.deepStrictEqual(consumeResult.data.comments, ['Hook me']);
 
         const msg = await dP;
         assert.strictEqual(msg.conversation_id, c);
@@ -492,7 +505,8 @@ describe('scenario: close tab', () => {
         await closedP;
 
         assert.strictEqual(readConversation(c).state, 'archived');
-        assert.strictEqual(readPending(c), null);
+        const pending = await httpGet(port, `/pending/${encodeURIComponent(c)}`);
+        assert.strictEqual(pending.status, 404);
     });
 });
 

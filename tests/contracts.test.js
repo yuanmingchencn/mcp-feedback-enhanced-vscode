@@ -26,12 +26,12 @@ const schemas = require('../out/messageSchemas');
 // Import WS server and fileStore from compiled output
 const { FeedbackWSServer } = require('../out/wsServer');
 const {
-    getPendingDir,
     readConversation,
     writeSession,
     deleteSession,
     writeConversation,
 } = require('../out/fileStore');
+const http = require('http');
 
 // ─── WebSocket Client Helpers ─────────────────────────────
 
@@ -106,6 +106,22 @@ function closeClient(ws) {
 
 function uniqueId(prefix = 'conv') {
     return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function httpGet(port, urlPath) {
+    return new Promise((resolve, reject) => {
+        http.get(`http://127.0.0.1:${port}${urlPath}`, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try {
+                    resolve({ status: res.statusCode, data: JSON.parse(body) });
+                } catch {
+                    resolve({ status: res.statusCode, data: null });
+                }
+            });
+        }).on('error', reject);
+    });
 }
 
 // ─── Extension -> Webview contracts ────────────────────────
@@ -306,12 +322,8 @@ describe('Extension -> Webview contracts', () => {
                 comments,
             }, 'pending_synced');
 
-            const pendingPath = path.join(getPendingDir(), `${convId}.json`);
-            assert.ok(fs.existsSync(pendingPath));
-
-            await new Promise((r) => setTimeout(r, 600));
             const pendingDeliveredPromise = waitForMessage(webviewWs, 'pending_delivered', 3000);
-            fs.unlinkSync(pendingPath);
+            await httpGet(serverPort, `/pending/${encodeURIComponent(convId)}?consume=1`);
 
             const msg = await pendingDeliveredPromise;
             schemas.PendingDeliveredOutSchema.parse(msg);

@@ -1,15 +1,10 @@
 /**
- * Manages pending message queue files and watches for hook consumption.
+ * In-memory pending message queue.
+ *
+ * Pending state lives entirely in the extension process.
+ * Hooks consume pending via HTTP endpoints on the WS server.
+ * No file I/O, no polling.
  */
-
-import * as fs from 'fs';
-import * as path from 'path';
-import {
-    writePending,
-    readPending,
-    deletePending,
-    getPendingDir,
-} from '../fileStore';
 
 export interface PendingDelivery {
     conversationId: string;
@@ -17,14 +12,15 @@ export interface PendingDelivery {
     images: string[];
 }
 
-export class PendingManager {
-    private serverPid: number;
-    private watchers = new Map<string, ReturnType<typeof setInterval>>();
-    private onDelivered?: (delivery: PendingDelivery) => void;
+export interface PendingEntry {
+    comments: string[];
+    images: string[];
+    timestamp: number;
+}
 
-    constructor(serverPid: number) {
-        this.serverPid = serverPid;
-    }
+export class PendingManager {
+    private store = new Map<string, PendingEntry>();
+    private onDelivered?: (delivery: PendingDelivery) => void;
 
     onPendingDelivered(cb: (delivery: PendingDelivery) => void): void {
         this.onDelivered = cb;
@@ -34,75 +30,46 @@ export class PendingManager {
         const queue = comments.filter(c => c.trim());
 
         if (queue.length === 0 && images.length === 0) {
-            this.cancelWatch(conversationId);
-            deletePending(conversationId);
+            this.store.delete(conversationId);
             return;
         }
 
-        writePending({
-            conversation_id: conversationId,
-            server_pid: this.serverPid,
+        this.store.set(conversationId, {
             comments: queue,
-            images: images.length > 0 ? images : undefined,
+            images: images.length > 0 ? images : [],
             timestamp: Date.now(),
         });
-
-        this._watchFile(conversationId);
     }
 
-    cancelWatch(conversationId: string): void {
-        const timer = this.watchers.get(conversationId);
-        if (timer) {
-            clearInterval(timer);
-            this.watchers.delete(conversationId);
+    read(conversationId: string): PendingEntry | null {
+        return this.store.get(conversationId) ?? null;
+    }
+
+    consume(conversationId: string): PendingEntry | null {
+        const entry = this.store.get(conversationId);
+        if (!entry) return null;
+        this.store.delete(conversationId);
+
+        if (this.onDelivered) {
+            this.onDelivered({
+                conversationId,
+                comments: entry.comments,
+                images: entry.images,
+            });
         }
+
+        return entry;
+    }
+
+    exists(conversationId: string): boolean {
+        return this.store.has(conversationId);
+    }
+
+    clear(conversationId: string): void {
+        this.store.delete(conversationId);
     }
 
     cleanup(): void {
-        for (const timer of this.watchers.values()) {
-            clearInterval(timer);
-        }
-        this.watchers.clear();
-    }
-
-    private _watchFile(conversationId: string): void {
-        if (this.watchers.has(conversationId)) return;
-
-        const pendingDir = getPendingDir();
-        const filePath = path.join(pendingDir, `${conversationId}.json`);
-
-        let lastKnownComments: string[] = [];
-        let lastKnownImages: string[] = [];
-        let lastKnownServerPid: number | null = null;
-
-        const timer = setInterval(() => {
-            try {
-                const data = readPending(conversationId);
-                if (data) {
-                    if (data.comments?.length) lastKnownComments = data.comments;
-                    if (data.images?.length) lastKnownImages = data.images;
-                    lastKnownServerPid = data?.server_pid ?? null;
-                }
-            } catch { /* ignore read errors */ }
-
-            if (!fs.existsSync(filePath)) {
-                clearInterval(timer);
-                this.watchers.delete(conversationId);
-
-                if (lastKnownServerPid !== null && lastKnownServerPid !== this.serverPid) {
-                    return;
-                }
-
-                if (this.onDelivered) {
-                    this.onDelivered({
-                        conversationId,
-                        comments: lastKnownComments,
-                        images: lastKnownImages,
-                    });
-                }
-            }
-        }, 500);
-
-        this.watchers.set(conversationId, timer);
+        this.store.clear();
     }
 }

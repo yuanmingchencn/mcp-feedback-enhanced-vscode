@@ -4,9 +4,10 @@
  *
  * Directory structure:
  *   sessions/<conversation_id>.json   - Hook-created session registrations
- *   pending/<conversation_id>.json    - Pending messages per conversation
  *   conversations/<conversation_id>.json - Persisted tab state
  *   servers/<pid>.json                - Extension instance registry
+ *
+ * Note: Pending messages are stored in-memory and served via HTTP.
  */
 
 import * as fs from 'fs';
@@ -14,14 +15,12 @@ import * as path from 'path';
 import * as os from 'os';
 import type {
     SessionRegistration,
-    PendingData,
     ConversationData,
     ServerInfo,
 } from './types';
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
 const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
-const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const CONVERSATIONS_DIR = path.join(CONFIG_DIR, 'conversations');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
@@ -85,25 +84,6 @@ export function listSessions(): SessionRegistration[] {
 export function getSessionsDir(): string {
     ensureDir(SESSIONS_DIR);
     return SESSIONS_DIR;
-}
-
-// ─── Pending ─────────────────────────────────────────────
-
-export function readPending(conversationId: string): PendingData | null {
-    return safeReadJSON<PendingData>(path.join(PENDING_DIR, `${conversationId}.json`));
-}
-
-export function writePending(data: PendingData): void {
-    safeWriteJSON(path.join(PENDING_DIR, `${data.conversation_id}.json`), data);
-}
-
-export function deletePending(conversationId: string): boolean {
-    return safeDelete(path.join(PENDING_DIR, `${conversationId}.json`));
-}
-
-export function getPendingDir(): string {
-    ensureDir(PENDING_DIR);
-    return PENDING_DIR;
 }
 
 // ─── Conversations (persisted tab state) ─────────────────
@@ -180,20 +160,4 @@ export function cleanupStaleSessions(): number {
     return cleaned;
 }
 
-export function cleanupStalePending(): number {
-    let cleaned = 0;
-    for (const file of listJSONFiles(PENDING_DIR)) {
-        const pending = safeReadJSON<PendingData>(path.join(PENDING_DIR, file));
-        if (pending?.server_pid && !isProcessAlive(pending.server_pid)) {
-            safeDelete(path.join(PENDING_DIR, file));
-            cleaned++;
-        }
-    }
-    return cleaned;
-}
-
-export function cleanupLegacyPending(): void {
-    safeDelete(path.join(CONFIG_DIR, 'pending.json'));
-}
-
-export { CONFIG_DIR, SESSIONS_DIR, PENDING_DIR, CONVERSATIONS_DIR, SERVERS_DIR };
+export { CONFIG_DIR, SESSIONS_DIR, CONVERSATIONS_DIR, SERVERS_DIR };
