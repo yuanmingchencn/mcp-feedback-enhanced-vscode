@@ -660,7 +660,9 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
         if (ui.isEnded) {
             sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn';
         } else if (ui.buttonMode === 'send') {
-            sendBtn.disabled = !hasContent; sendBtn.textContent = 'Send'; sendBtn.className = 'send-btn';
+            sendBtn.disabled = !hasContent;
+            sendBtn.textContent = ui.feedbackQueueSize > 1 ? 'Send (' + ui.feedbackQueueSize + ')' : 'Send';
+            sendBtn.className = 'send-btn';
         } else {
             sendBtn.disabled = !hasContent; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode';
         }

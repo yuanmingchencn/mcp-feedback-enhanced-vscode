@@ -15,7 +15,7 @@ const { PanelState } = require('../static/panelState.js');
 
 class SimpleModel {
     constructor() {
-        this.tabs = new Map(); // id -> { state, pendingCount, pendingImageCount, stagedCount, label }
+        this.tabs = new Map(); // id -> { state, pendingCount, pendingImageCount, stagedCount, label, sessionQueueLen }
         this.activeTabId = null;
     }
 }
@@ -38,12 +38,14 @@ class FeedbackRequestCmd {
                 label: 'Label ' + this.convId,
             },
         });
+        const existing = model.tabs.get(this.convId);
         model.tabs.set(this.convId, {
             state: 'waiting',
-            pendingCount: 0,
-            pendingImageCount: 0,
-            stagedCount: model.tabs.get(this.convId)?.stagedCount || 0,
+            pendingCount: existing?.pendingCount || 0,
+            pendingImageCount: existing?.pendingImageCount || 0,
+            stagedCount: existing?.stagedCount || 0,
             label: 'Label ' + this.convId,
+            sessionQueueLen: (existing?.sessionQueueLen || 0) + 1,
         });
         model.activeTabId = this.convId;
     }
@@ -62,7 +64,9 @@ class FeedbackResponseCmd {
             conversation_id: model.activeTabId,
             feedback: 'test feedback',
         });
-        model.tabs.get(model.activeTabId).state = 'running';
+        const tab = model.tabs.get(model.activeTabId);
+        tab.sessionQueueLen = Math.max(0, tab.sessionQueueLen - 1);
+        tab.state = tab.sessionQueueLen === 0 ? 'running' : 'waiting';
     }
     toString() { return 'FeedbackResponse()'; }
 }
@@ -166,6 +170,7 @@ class SessionEndedCmd {
         tab.state = 'ended';
         tab.pendingCount = 0;
         tab.pendingImageCount = 0;
+        tab.sessionQueueLen = 0;
     }
     toString() { return 'SessionEnded()'; }
 }

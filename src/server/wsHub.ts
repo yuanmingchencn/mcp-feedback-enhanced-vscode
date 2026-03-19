@@ -519,18 +519,22 @@ export class WsHub {
     // ── Data Queries ────────────────────────────────────────
 
     private _sendConversationsList(ws: WebSocket): void {
-        const conversations = this.conversations.getConversationsList().map(c => ({
-            conversation_id: c.conversation_id,
-            model: c.model,
-            label: c.label,
-            state: c.state,
-            started_at: c.started_at,
-            ended_at: c.ended_at,
-            message_count: c.messages.length,
-            pending_count: c.pending_queue.length,
-            is_background: c.is_background,
-            active_session_id: c.active_session_id || null,
-        }));
+        const conversations = this.conversations.getConversationsList().map(c => {
+            const pendingSessions = this.feedback.getSessionsForConversation(c.conversation_id);
+            return {
+                conversation_id: c.conversation_id,
+                model: c.model,
+                label: c.label,
+                state: c.state,
+                started_at: c.started_at,
+                ended_at: c.ended_at,
+                message_count: c.messages.length,
+                pending_count: c.pending_queue.length,
+                is_background: c.is_background,
+                active_session_id: c.active_session_id || null,
+                pending_sessions: pendingSessions,
+            };
+        });
         this._send(ws, { type: 'conversations_list', conversations });
     }
 

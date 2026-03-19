@@ -275,11 +275,12 @@ describe('state transitions', () => {
     it('waiting -> running via feedback_submitted', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         p.handleMessage({
             type: 'feedback_submitted',
             conversation_id: 'c1',
+            session_id: 's1',
             feedback: 'ok',
         });
         assert.strictEqual(t.state, 'running');
@@ -309,7 +310,7 @@ describe('state transitions', () => {
     it('waiting -> ended via session_ended', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         p.handleMessage({ type: 'session_ended', conversation_id: 'c1' });
         assert.strictEqual(t.state, 'ended');
@@ -357,7 +358,7 @@ describe('smartSend', () => {
     it('submits feedback when waiting', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         const cmds = p.smartSend('ok', []);
         const ws = getWsSend(cmds, 'feedback_response');
@@ -406,7 +407,7 @@ describe('submitFeedback', () => {
     it('sends feedback_response with images', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         const cmds = p.submitFeedback('ok', ['img1']);
         const ws = getWsSend(cmds, 'feedback_response');
@@ -418,7 +419,7 @@ describe('submitFeedback', () => {
     it('transitions to running and clears sessionId', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         p.submitFeedback('ok', []);
         assert.strictEqual(t.state, 'running');
@@ -428,7 +429,7 @@ describe('submitFeedback', () => {
     it('adds user message to tab', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
         p.submitFeedback('my feedback', []);
         const userMsg = t.messages.find(m => m.role === 'user');
@@ -436,7 +437,7 @@ describe('submitFeedback', () => {
         assert.strictEqual(userMsg.content, 'my feedback');
     });
 
-    it('returns empty if no pendingSessionId', () => {
+    it('returns empty if sessionQueue is empty', () => {
         const p = new PanelState();
         p.getOrCreateTab('c1', 'A', '', 'waiting');
         p.activeTabId = 'c1';
@@ -447,7 +448,7 @@ describe('submitFeedback', () => {
     it('clears staged images after submit', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         t.stagedImages = ['img1'];
         p.activeTabId = 'c1';
         p.submitFeedback('ok', []);
@@ -1059,13 +1060,117 @@ describe('scenario: pending queue CRUD', () => {
     });
 });
 
+// ── Multiple concurrent feedback requests ───────────────
+
+describe('multiple feedback queue (FIFO)', () => {
+    it('queues multiple session_updated and responds in order', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'First' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's2', summary: 'Second' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's3', summary: 'Third' } });
+
+        const t = p.tabs.get('c1');
+        assert.strictEqual(t.sessionQueue.length, 3);
+        assert.strictEqual(t.pendingSessionId, 's1');
+
+        const cmds1 = p.submitFeedback('reply1', []);
+        const ws1 = getWsSend(cmds1, 'feedback_response');
+        assert.strictEqual(ws1.message.session_id, 's1');
+        assert.strictEqual(t.state, 'waiting');
+        assert.strictEqual(t.sessionQueue.length, 2);
+        assert.strictEqual(t.pendingSessionId, 's2');
+
+        const cmds2 = p.submitFeedback('reply2', []);
+        const ws2 = getWsSend(cmds2, 'feedback_response');
+        assert.strictEqual(ws2.message.session_id, 's2');
+        assert.strictEqual(t.state, 'waiting');
+        assert.strictEqual(t.sessionQueue.length, 1);
+
+        const cmds3 = p.submitFeedback('reply3', []);
+        const ws3 = getWsSend(cmds3, 'feedback_response');
+        assert.strictEqual(ws3.message.session_id, 's3');
+        assert.strictEqual(t.state, 'running');
+        assert.strictEqual(t.sessionQueue.length, 0);
+    });
+
+    it('does not duplicate sessions in queue', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'Hi' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'Hi again' } });
+
+        assert.strictEqual(p.tabs.get('c1').sessionQueue.length, 1);
+    });
+
+    it('feedback_submitted removes specific session from queue', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'A' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's2', summary: 'B' } });
+
+        p.handleMessage({ type: 'feedback_submitted', conversation_id: 'c1', session_id: 's1', feedback: 'ok' });
+        const t = p.tabs.get('c1');
+        assert.strictEqual(t.sessionQueue.length, 1);
+        assert.strictEqual(t.pendingSessionId, 's2');
+        assert.strictEqual(t.state, 'waiting');
+    });
+
+    it('getUIState reports feedbackQueueSize', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'A' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's2', summary: 'B' } });
+
+        const ui = p.getUIState();
+        assert.strictEqual(ui.feedbackQueueSize, 2);
+    });
+
+    it('session_ended clears entire queue', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'A' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's2', summary: 'B' } });
+        p.handleMessage({ type: 'session_ended', conversation_id: 'c1' });
+
+        assert.strictEqual(p.tabs.get('c1').sessionQueue.length, 0);
+        assert.strictEqual(p.tabs.get('c1').state, 'ended');
+    });
+
+    it('serialization preserves sessionQueue', () => {
+        const p = new PanelState();
+        p.getOrCreateTab('c1', 'A', '', 'idle');
+        p.activeTabId = 'c1';
+
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's1', summary: 'A' } });
+        p.handleMessage({ type: 'session_updated', session_info: { conversation_id: 'c1', session_id: 's2', summary: 'B' } });
+
+        const data = p.serialize();
+        const p2 = new PanelState();
+        p2.deserialize(data);
+
+        assert.strictEqual(p2.tabs.get('c1').sessionQueue.length, 2);
+        assert.strictEqual(p2.tabs.get('c1').pendingSessionId, 's1');
+    });
+});
+
 // ── Command type verification ───────────────────────────
 
 describe('command types', () => {
     it('all returned items are valid command objects', () => {
         const p = new PanelState();
         const t = p.getOrCreateTab('c1', 'A', '', 'waiting');
-        t.pendingSessionId = 's1';
+        t.sessionQueue.push({ sessionId: 's1', summary: '' });
         p.activeTabId = 'c1';
 
         const allCmds = [

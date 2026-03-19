@@ -143,19 +143,15 @@ describe('stop', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    it('returns followup_message with FOLLOW_INSTRUCTIONS when no pending', () => {
+    it('returns empty when no pending (no forced followup)', () => {
         const result = runHook({ hook_event_name: 'stop', conversation_id: 'conv-none' }, tempDir);
-        assert.ok(result.followup_message);
-        assert.ok(result.followup_message.includes('interactive_feedback'));
-        assert.ok(result.followup_message.includes('check in with the user'));
+        assert.deepStrictEqual(result, {});
     });
 
-    it('returns followup_message with pending content when pending exists', () => {
+    it('returns empty object even when pending exists (stop disabled)', () => {
         writePending(configDir, 'conv-stop', ['Please fix this'], []);
         const result = runHook({ hook_event_name: 'stop', conversation_id: 'conv-stop' }, tempDir);
-        assert.ok(result.followup_message);
-        assert.ok(result.followup_message.includes('[User Feedback]'));
-        assert.ok(result.followup_message.includes('Please fix this'));
+        assert.deepStrictEqual(result, {});
     });
 
     it('returns empty object when loop_count >= 3', () => {
@@ -163,10 +159,10 @@ describe('stop', () => {
         assert.deepStrictEqual(result, {});
     });
 
-    it('consumes pending after delivery', () => {
+    it('does not consume pending when stop is disabled', () => {
         writePending(configDir, 'conv-stop-consume', ['Stop feedback'], []);
         runHook({ hook_event_name: 'stop', conversation_id: 'conv-stop-consume' }, tempDir);
-        assert.strictEqual(pendingExists(configDir, 'conv-stop-consume'), false);
+        assert.strictEqual(pendingExists(configDir, 'conv-stop-consume'), true);
     });
 });
 
@@ -183,25 +179,23 @@ describe('preToolUse', () => {
         fs.rmSync(tempDir, { recursive: true, force: true });
     });
 
-    it('returns decision:allow when no pending', () => {
+    it('returns empty object when no pending (preToolUse disabled)', () => {
         const result = runHook({
             hook_event_name: 'preToolUse',
             conversation_id: 'conv-allow',
             tool_name: 'run_terminal_cmd',
         }, tempDir);
-        assert.strictEqual(result.decision, 'allow');
+        assert.deepStrictEqual(result, {});
     });
 
-    it('returns decision:deny with reason when pending exists', () => {
+    it('returns empty object even when pending exists (preToolUse disabled)', () => {
         writePending(configDir, 'conv-deny', ['Stop using tools'], []);
         const result = runHook({
             hook_event_name: 'preToolUse',
             conversation_id: 'conv-deny',
             tool_name: 'run_terminal_cmd',
         }, tempDir);
-        assert.strictEqual(result.decision, 'deny');
-        assert.ok(result.reason);
-        assert.ok(result.reason.includes('Stop using tools'));
+        assert.deepStrictEqual(result, {});
     });
 
     it('does NOT consume pending file', () => {
@@ -214,24 +208,24 @@ describe('preToolUse', () => {
         assert.strictEqual(pendingExists(configDir, 'conv-no-consume'), true);
     });
 
-    it('allows allowlisted tools even with pending', () => {
+    it('returns empty for allowlisted tools (preToolUse disabled)', () => {
         writePending(configDir, 'conv-allowlist', ['Some feedback'], []);
         const result = runHook({
             hook_event_name: 'preToolUse',
             conversation_id: 'conv-allowlist',
             tool_name: 'get_system_info',
         }, tempDir);
-        assert.strictEqual(result.decision, 'allow');
+        assert.deepStrictEqual(result, {});
     });
 
-    it('allows interactive_feedback tool', () => {
+    it('returns empty for interactive_feedback tool (preToolUse disabled)', () => {
         writePending(configDir, 'conv-if', ['Feedback'], []);
         const result = runHook({
             hook_event_name: 'preToolUse',
             conversation_id: 'conv-if',
             tool_name: 'interactive_feedback',
         }, tempDir);
-        assert.strictEqual(result.decision, 'allow');
+        assert.deepStrictEqual(result, {});
     });
 });
 

@@ -64,6 +64,16 @@ export class FeedbackManager {
         return this.pending.get(sessionId)?.mcpClient;
     }
 
+    getSessionsForConversation(conversationId: string): string[] {
+        const sessions: string[] = [];
+        for (const [sid, req] of this.pending) {
+            if (req.conversationId === conversationId) {
+                sessions.push(sid);
+            }
+        }
+        return sessions;
+    }
+
     hasPending(): boolean {
         return this.pending.size > 0;
     }

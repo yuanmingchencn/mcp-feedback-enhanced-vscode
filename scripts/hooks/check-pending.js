@@ -21,10 +21,6 @@ const PENDING_DIR = path.join(CONFIG_DIR, 'pending');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
 const STOP_LOOP_LIMIT = 3;
-const FOLLOW_INSTRUCTIONS =
-    'You MUST call the interactive_feedback tool now to check in with the user before ending. ' +
-    'Provide a clear summary of what was done and ask for next steps.';
-
 const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
 const PASSTHROUGH_TOOLS = ['task', 'switchmode', 'read', 'grep', 'glob', 'semanticsearch', 'readlints', 'todowrite', 'askquestion'];
 
@@ -237,47 +233,19 @@ function main() {
     }
 
     // ─── stop ─────────────────────────────────────────
+    // DISABLED for testing: checking if stop hook causes credit consumption
     if (hook === 'stop') {
-        const status = input.status || 'completed';
-        if (loopCount >= STOP_LOOP_LIMIT) {
-            log(`  stop: loop limit reached (status=${status})`);
-            output({});
-            return;
-        }
-
-        if (status === 'aborted') {
-            log('  stop: aborted by user, not intercepting');
-            output({});
-            return;
-        }
-
-        const pending = getPending(conversationId);
-        log(`  stop: status=${status} pending=${!!hasPendingContent(pending)}`);
-        if (hasPendingContent(pending)) {
-            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            consumePending(conversationId);
-            output({ followup_message: fmtAgent(combined) });
-        } else {
-            output({ followup_message: FOLLOW_INSTRUCTIONS });
-        }
+        log(`  stop: DISABLED for testing (status=${input.status || 'completed'} loop=${loopCount})`);
+        output({});
         return;
     }
 
     // ─── preToolUse ───────────────────────────────────
-    // Never consume: Cursor ignores preToolUse deny for Shell/MCP tools,
-    // so pending must survive for beforeShellExecution/beforeMCPExecution.
+    // DISABLED for testing: decision field is ignored by Cursor
     if (hook === 'preToolUse') {
         const toolName = input.tool_name || '';
-        const pending = getPending(conversationId);
-        log(`  preToolUse: tool=${toolName} pending=${!!hasPendingContent(pending)} allowlisted=${isAllowlisted(toolName)}`);
-
-        if (hasPendingContent(pending) && !isAllowlisted(toolName)) {
-            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            output({ decision: 'deny', reason: fmtAgent(combined) });
-            return;
-        }
-
-        output({ decision: 'allow' });
+        log(`  preToolUse: DISABLED (tool=${toolName})`);
+        output({});
         return;
     }
 

@@ -220,7 +220,7 @@ function deployCursorHooks(extensionPath: string): void {
         if (!hooksConfig.version) { hooksConfig.version = 1; }
 
         const hooks = (hooksConfig.hooks || {}) as Record<string, Array<Record<string, unknown>>>;
-        const hookPoints = ['sessionStart', 'stop', 'preToolUse', 'beforeShellExecution', 'beforeMCPExecution', 'subagentStart'];
+        const hookPoints = ['sessionStart'];
         const hookCommand = `node ${targetHook}`;
         const SOURCE_TAG = 'mcp-feedback-enhanced';
 

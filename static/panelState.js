@@ -50,7 +50,7 @@
             this.messages = [];
             this.pendingQueue = [];
             this.pendingImages = [];
-            this.pendingSessionId = null;
+            this.sessionQueue = [];
             this.autoReply = false;
             this.autoReplyText = 'Continue';
             this.inputDraft = '';
@@ -62,7 +62,11 @@
         }
 
         get isWaiting() {
-            return this.state === 'waiting' && this.pendingSessionId !== null;
+            return this.state === 'waiting' && this.sessionQueue.length > 0;
+        }
+
+        get pendingSessionId() {
+            return this.sessionQueue.length > 0 ? this.sessionQueue[0].sessionId : null;
         }
 
         get isRunning() {
@@ -236,7 +240,7 @@
 
             tab.transitionTo('ended');
             tab.clearPendingQueue();
-            tab.pendingSessionId = null;
+            tab.sessionQueue = [];
             tab.addMessage('system', '\u2500\u2500 Session ended \u2500\u2500');
 
             const cmds = [render('tabs'), dom('save_state')];
@@ -256,7 +260,10 @@
 
             const tab = this.getOrCreateTab(id, info.label || null, null, 'waiting');
             tab.state = 'waiting';
-            tab.pendingSessionId = info.session_id;
+            const alreadyQueued = tab.sessionQueue.some(function (s) { return s.sessionId === info.session_id; });
+            if (!alreadyQueued) {
+                tab.sessionQueue.push({ sessionId: info.session_id, summary: info.summary || '' });
+            }
             tab.addMessage('ai', info.summary || '');
 
             this.activeTabId = id;
@@ -312,8 +319,14 @@
             if (msg.feedback && !alreadyHas) {
                 tab.addMessage('user', msg.feedback);
             }
-            tab.pendingSessionId = null;
-            tab.transitionTo('running');
+            if (msg.session_id) {
+                tab.sessionQueue = tab.sessionQueue.filter(function (s) { return s.sessionId !== msg.session_id; });
+            } else {
+                tab.sessionQueue.shift();
+            }
+            if (tab.sessionQueue.length === 0) {
+                tab.transitionTo('running');
+            }
 
             const cmds = [render('tabs'), dom('save_state')];
             if (msg.conversation_id === this.activeTabId) {
@@ -380,7 +393,13 @@
         _onConversationsList(msg) {
             for (const c of msg.conversations || []) {
                 const tab = this.getOrCreateTab(c.conversation_id, c.label, c.model, c.state);
-                if (c.active_session_id) tab.pendingSessionId = c.active_session_id;
+                var sessions = c.pending_sessions || (c.active_session_id ? [c.active_session_id] : []);
+                for (var si = 0; si < sessions.length; si++) {
+                    var sid = sessions[si];
+                    if (!tab.sessionQueue.some(function (s) { return s.sessionId === sid; })) {
+                        tab.sessionQueue.push({ sessionId: sid, summary: '' });
+                    }
+                }
             }
 
             const cmds = [render('tabs')];
@@ -442,19 +461,21 @@
 
         submitFeedback(text, images) {
             const tab = this._activeTab();
-            if (!tab || !tab.pendingSessionId) return [];
+            if (!tab || tab.sessionQueue.length === 0) return [];
 
-            const sessionId = tab.pendingSessionId;
+            const entry = tab.sessionQueue.shift();
             const msgImages = images && images.length > 0 ? images : undefined;
             tab.addMessage('user', text, { images: msgImages });
-            tab.pendingSessionId = null;
-            tab.transitionTo('running');
             tab.stagedImages = [];
+
+            if (tab.sessionQueue.length === 0) {
+                tab.transitionTo('running');
+            }
 
             return [
                 wsSend({
                     type: 'feedback_response',
-                    session_id: sessionId,
+                    session_id: entry.sessionId,
                     conversation_id: tab.conversationId,
                     feedback: text,
                     images: images || [],
@@ -611,12 +632,14 @@
         getUIState() {
             const tab = this._activeTab();
             const state = tab ? tab.state : 'idle';
+            const queueLen = tab ? tab.sessionQueue.length : 0;
             return {
                 inputVisible: state === 'waiting' || state === 'running',
                 buttonMode: state === 'waiting' ? 'send' : 'queue',
                 isEnded: state === 'ended',
                 isIdle: state === 'idle' || !tab,
                 tabCount: this.tabs.size,
+                feedbackQueueSize: queueLen,
             };
         }
 
@@ -635,6 +658,7 @@
                         messages: t.messages.slice(-100),
                         pendingQueue: t.pendingQueue,
                         pendingImages: t.pendingImages,
+                        sessionQueue: t.sessionQueue,
                         autoReply: t.autoReply,
                         autoReplyText: t.autoReplyText,
                         inputDraft: t.inputDraft || '',
@@ -651,6 +675,7 @@
                 tab.messages = t.messages || [];
                 tab.pendingQueue = t.pendingQueue || [];
                 tab.pendingImages = t.pendingImages || [];
+                tab.sessionQueue = t.sessionQueue || [];
                 tab.autoReply = t.autoReply || false;
                 tab.autoReplyText = t.autoReplyText || 'Continue';
                 tab.inputDraft = t.inputDraft || '';
