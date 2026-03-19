@@ -204,7 +204,7 @@ function deployCursorHooks(extensionPath: string): void {
         const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
         fs.mkdirSync(targetDir, { recursive: true });
 
-        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js', 'agent-stop.js'];
+        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js'];
         for (const file of hookFiles) {
             const src = path.join(hooksSourceDir, file);
             if (fs.existsSync(src)) {
@@ -212,12 +212,12 @@ function deployCursorHooks(extensionPath: string): void {
             }
         }
 
-        try { fs.unlinkSync(path.join(targetDir, 'check-pending.js')); } catch { /* old file gone */ }
+        for (const old of ['check-pending.js', 'agent-stop.js']) {
+            try { fs.unlinkSync(path.join(targetDir, old)); } catch { /* already gone */ }
+        }
 
         const sessionStartHook = path.join(targetDir, 'session-start.js');
         const preToolUseHook = path.join(targetDir, 'consume-pending.js');
-        const stopHook = path.join(targetDir, 'agent-stop.js');
-
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
 
@@ -234,7 +234,6 @@ function deployCursorHooks(extensionPath: string): void {
         const hookEntries: Record<string, Record<string, unknown>> = {
             sessionStart: { command: `node ${sessionStartHook}` },
             preToolUse: { command: `node ${preToolUseHook}` },
-            stop: { command: `node ${stopHook}`, loop_limit: null },
         };
 
         for (const [event, entry] of Object.entries(hookEntries)) {
@@ -246,6 +245,16 @@ function deployCursorHooks(extensionPath: string): void {
                 ...entry,
                 _source: SOURCE_TAG,
             });
+        }
+
+        const RETIRED_HOOKS = ['stop'];
+        for (const event of RETIRED_HOOKS) {
+            if (hooks[event]) {
+                hooks[event] = hooks[event].filter(h =>
+                    h._source !== SOURCE_TAG && !LEGACY_TAGS.includes(h._source as string)
+                );
+                if (hooks[event].length === 0) { delete hooks[event]; }
+            }
         }
 
         hooksConfig.hooks = hooks;
