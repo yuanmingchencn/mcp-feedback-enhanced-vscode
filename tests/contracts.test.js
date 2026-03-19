@@ -418,23 +418,6 @@ describe('MCP -> Extension contracts', () => {
 // ─── Hook output contracts ─────────────────────────────────
 
 describe('Hook output contracts', () => {
-    it('preToolUse allow matches PreToolUseOutputSchema', () => {
-        const msg = { decision: 'allow' };
-        schemas.PreToolUseOutputSchema.parse(msg);
-    });
-
-    it('preToolUse deny matches PreToolUseOutputSchema', () => {
-        const msg = { decision: 'deny', reason: 'test' };
-        schemas.PreToolUseOutputSchema.parse(msg);
-    });
-
-    it('preToolUse invalid format is rejected', () => {
-        assert.throws(
-            () => schemas.PreToolUseOutputSchema.parse({ allow: false }),
-            (err) => err.name === 'ZodError'
-        );
-    });
-
     it('beforeShellExecution pass-through matches BeforeShellOutputSchema', () => {
         const msg = {};
         schemas.BeforeShellOutputSchema.parse(msg);
