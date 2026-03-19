@@ -8,6 +8,7 @@ const http = require('node:http');
 
 const SESSION_HOOK = path.join(__dirname, '..', 'scripts', 'hooks', 'session-start.js');
 const CONSUME_HOOK = path.join(__dirname, '..', 'scripts', 'hooks', 'consume-pending.js');
+const STOP_HOOK = path.join(__dirname, '..', 'scripts', 'hooks', 'agent-stop.js');
 
 function runHook(script, input, homeDir, extraEnv = {}) {
     const result = execFileSync('node', [script], {
@@ -329,6 +330,67 @@ describe('server matching', () => {
             workspace_roots: ['/any'],
         }, tempDir);
         assert.strictEqual(result.env.MCP_FEEDBACK_SERVER_PID, undefined);
+    });
+});
+
+describe('stop hook', () => {
+    let tempDir, configDir, mockPort, mockServer;
+
+    before((_, done) => {
+        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-stop-'));
+        configDir = setupConfigDirs(tempDir);
+        mockServer = http.createServer((req, res) => {
+            if (req.url.includes('/pending/') && !req.url.includes('empty')) {
+                res.writeHead(200, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({ comments: ['pending msg'] }));
+            } else {
+                res.writeHead(404);
+                res.end('');
+            }
+        });
+        mockServer.listen(0, () => {
+            mockPort = mockServer.address().port;
+            done();
+        });
+    });
+
+    after((_, done) => {
+        mockServer.close(() => {
+            fs.rmSync(tempDir, { recursive: true, force: true });
+            done();
+        });
+    });
+
+    it('returns followup_message on completed status', () => {
+        const result = runHook(STOP_HOOK, {
+            status: 'completed',
+            loop_count: 0,
+        }, tempDir);
+        assert.ok(result.followup_message);
+        assert.ok(result.followup_message.includes('interactive_feedback'));
+    });
+
+    it('returns empty on non-completed status', () => {
+        const aborted = runHook(STOP_HOOK, { status: 'aborted', loop_count: 0 }, tempDir);
+        assert.deepStrictEqual(aborted, {});
+        const errResult = runHook(STOP_HOOK, { status: 'error', loop_count: 0 }, tempDir);
+        assert.deepStrictEqual(errResult, {});
+    });
+
+    it('mentions pending when server has pending messages', async () => {
+        writeServer(configDir, process.pid, ['/ws/proj']);
+        const serverFile = path.join(configDir, 'servers', process.pid + '.json');
+        const data = JSON.parse(fs.readFileSync(serverFile, 'utf-8'));
+        data.port = mockPort;
+        fs.writeFileSync(serverFile, JSON.stringify(data));
+
+        const result = await runHookAsync(STOP_HOOK, {
+            status: 'completed',
+            loop_count: 0,
+            conversation_id: 'conv-with-pending',
+            workspace_roots: ['/ws/proj'],
+        }, tempDir, { MCP_FEEDBACK_SERVER_PID: String(process.pid) });
+        assert.ok(result.followup_message.includes('pending'));
     });
 });
 

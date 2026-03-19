@@ -204,7 +204,7 @@ function deployCursorHooks(extensionPath: string): void {
         const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
         fs.mkdirSync(targetDir, { recursive: true });
 
-        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js'];
+        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js', 'agent-stop.js'];
         for (const file of hookFiles) {
             const src = path.join(hooksSourceDir, file);
             if (fs.existsSync(src)) {
@@ -216,6 +216,7 @@ function deployCursorHooks(extensionPath: string): void {
 
         const sessionStartHook = path.join(targetDir, 'session-start.js');
         const preToolUseHook = path.join(targetDir, 'consume-pending.js');
+        const stopHook = path.join(targetDir, 'agent-stop.js');
 
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
@@ -230,18 +231,19 @@ function deployCursorHooks(extensionPath: string): void {
         const SOURCE_TAG = 'mcp-feedback-enhanced';
         const LEGACY_TAGS = ['mcp-feedback-v2'];
 
-        const hookEntries: Record<string, string> = {
-            sessionStart: `node ${sessionStartHook}`,
-            preToolUse: `node ${preToolUseHook}`,
+        const hookEntries: Record<string, Record<string, unknown>> = {
+            sessionStart: { command: `node ${sessionStartHook}` },
+            preToolUse: { command: `node ${preToolUseHook}` },
+            stop: { command: `node ${stopHook}`, loop_limit: null },
         };
 
-        for (const [event, command] of Object.entries(hookEntries)) {
+        for (const [event, entry] of Object.entries(hookEntries)) {
             if (!hooks[event]) { hooks[event] = []; }
             hooks[event] = hooks[event].filter(h =>
                 h._source !== SOURCE_TAG && !LEGACY_TAGS.includes(h._source as string)
             );
             hooks[event].push({
-                command,
+                ...entry,
                 _source: SOURCE_TAG,
             });
         }
