@@ -323,19 +323,11 @@ describe('subagentStart', () => {
         assert.deepStrictEqual(result, {});
     });
 
-    it('denies with permission/user_message when pending', () => {
+    it('allows through even when pending (passthrough)', () => {
         writePending(configDir, 'conv-sub', ['No subagent'], []);
         const result = runHook({ hook_event_name: 'subagentStart', conversation_id: 'conv-sub' }, tempDir);
-        assert.strictEqual(result.permission, 'deny');
-        assert.ok(result.user_message);
-        assert.ok(result.user_message.includes('No subagent'));
-        assert.strictEqual(result.agent_message, undefined);
-    });
-
-    it('consumes pending file after deny', () => {
-        writePending(configDir, 'conv-sub-consume', ['Subagent feedback'], []);
-        runHook({ hook_event_name: 'subagentStart', conversation_id: 'conv-sub-consume' }, tempDir);
-        assert.strictEqual(pendingExists(configDir, 'conv-sub-consume'), false);
+        assert.strictEqual(result.permission, undefined);
+        assert.ok(pendingExists(configDir, 'conv-sub'));
     });
 });
 

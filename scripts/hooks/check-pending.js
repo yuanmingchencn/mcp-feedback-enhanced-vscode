@@ -26,11 +26,14 @@ const FOLLOW_INSTRUCTIONS =
     'Provide a clear summary of what was done and ask for next steps.';
 
 const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
+const PASSTHROUGH_TOOLS = ['task', 'switchmode', 'read', 'grep', 'glob', 'semanticsearch', 'readlints', 'todowrite', 'askquestion'];
 
 function isAllowlisted(toolName) {
     if (!toolName) return false;
     const lower = toolName.toLowerCase();
-    return ALLOWLIST_TOOLS.some(t => lower.includes(t.toLowerCase()));
+    if (ALLOWLIST_TOOLS.some(t => lower.includes(t.toLowerCase()))) return true;
+    if (PASSTHROUGH_TOOLS.some(t => lower === t)) return true;
+    return false;
 }
 
 const USAGE_RULES = [
@@ -235,14 +238,21 @@ function main() {
 
     // ─── stop ─────────────────────────────────────────
     if (hook === 'stop') {
+        const status = input.status || 'completed';
         if (loopCount >= STOP_LOOP_LIMIT) {
-            log('  stop: loop limit reached');
+            log(`  stop: loop limit reached (status=${status})`);
+            output({});
+            return;
+        }
+
+        if (status === 'aborted') {
+            log('  stop: aborted by user, not intercepting');
             output({});
             return;
         }
 
         const pending = getPending(conversationId);
-        log(`  stop: pending=${!!hasPendingContent(pending)}`);
+        log(`  stop: status=${status} pending=${!!hasPendingContent(pending)}`);
         if (hasPendingContent(pending)) {
             const combined = (pending.comments || []).join('\n\n') || '(image pending)';
             consumePending(conversationId);
@@ -309,19 +319,10 @@ function main() {
     }
 
     // ─── subagentStart ───────────────────────────────
-    // Uses permission/user_message per official docs. Consumes pending.
+    // Allow sub-agents to start freely. Pending is delivered via other hooks.
     if (hook === 'subagentStart') {
         const pending = getPending(conversationId);
-        log(`  subagentStart: pending=${!!hasPendingContent(pending)}`);
-        if (hasPendingContent(pending)) {
-            const combined = (pending.comments || []).join('\n\n') || '(image pending)';
-            consumePending(conversationId);
-            output({
-                permission: 'deny',
-                user_message: fmtUser(combined),
-            });
-            return;
-        }
+        log(`  subagentStart: pending=${!!hasPendingContent(pending)} (passthrough)`);
         output({});
         return;
     }

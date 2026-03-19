@@ -34,6 +34,7 @@ export class PendingManager {
         const queue = comments.filter(c => c.trim());
 
         if (queue.length === 0 && images.length === 0) {
+            this.cancelWatch(conversationId);
             deletePending(conversationId);
             return;
         }

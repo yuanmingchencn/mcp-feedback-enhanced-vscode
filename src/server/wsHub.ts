@@ -58,7 +58,7 @@ function wsLog(msg: string): void {
     } catch { /* ignore */ }
 }
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 const PORT_RANGE_START = 48200;
 const PORT_RANGE_END = 48300;
 const HEARTBEAT_INTERVAL = 30_000;

@@ -230,10 +230,11 @@ body{
   line-height:1;opacity:0;transition:opacity .15s;
 }
 .img-preview:hover .remove{opacity:1}
+.input-actions{display:flex;flex-direction:column;gap:6px;align-items:stretch}
 .attach-btn{
   background:transparent;border:1px solid var(--border);color:var(--fg-dim);
-  border-radius:10px;padding:10px;cursor:pointer;font-size:16px;line-height:1;
-  flex-shrink:0;transition:all .2s;
+  border-radius:10px;padding:8px 10px;cursor:pointer;font-size:15px;line-height:1;
+  transition:all .2s;display:flex;align-items:center;justify-content:center;
 }
 .attach-btn:hover{color:var(--fg);border-color:var(--btn-bg);box-shadow:0 0 8px rgba(124,58,237,0.15)}
 .message .content img{max-width:200px;max-height:150px;border-radius:8px;margin:6px 0;cursor:zoom-in;display:block;transition:opacity .15s}
@@ -325,6 +326,7 @@ body.input-hidden .pending-section{display:none!important}
 </div>
 
 <div class="status-bar" id="statusBar">
+  <span id="versionLabel" style="opacity:.5;font-size:10px">v2.1.0</span>
   <div style="flex:1"></div>
   <div class="settings-toggle"><button id="settingsBtn" title="Settings">&#9881;</button></div>
 </div>
@@ -364,9 +366,11 @@ body.input-hidden .pending-section{display:none!important}
 <div class="input-area" style="position:relative">
   <div class="at-dropdown" id="atDropdown"></div>
   <div class="input-row">
-    <button class="attach-btn" id="attachBtn" title="Attach image file">&#128206;</button>
     <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V, @ to reference files)" rows="4"></textarea>
-    <button class="send-btn" id="sendBtn" disabled>Send</button>
+    <div class="input-actions">
+      <button class="attach-btn" id="attachBtn" title="Attach image file">&#128206;</button>
+      <button class="send-btn" id="sendBtn" disabled>Send</button>
+    </div>
   </div>
 </div>
 <input type="file" id="fileInput" accept="image/*" multiple style="display:none">
@@ -913,7 +917,14 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
                 ws.send(JSON.stringify({ type: 'get_conversations' }));
             };
             ws.onmessage = function (e) {
-                try { exec(state.handleMessage(JSON.parse(e.data))); } catch (err) { console.error(err); }
+                try {
+                    var msg = JSON.parse(e.data);
+                    if (msg.type === 'connection_established' && msg.version) {
+                        var vl = document.getElementById('versionLabel');
+                        if (vl) vl.textContent = 'v' + msg.version;
+                    }
+                    exec(state.handleMessage(msg));
+                } catch (err) { console.error(err); }
             };
             ws.onclose = function () { scheduleReconnect(); };
             ws.onerror = function () {};
