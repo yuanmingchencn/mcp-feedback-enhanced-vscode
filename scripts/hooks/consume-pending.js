@@ -20,8 +20,10 @@ function isAllowlisted(toolName) {
     return false;
 }
 
+var FEEDBACK_REMINDER = '\n\nReminder: You MUST call interactive_feedback before ending your turn. The decision to exit is ALWAYS the user\'s, never yours.';
+
 function fmtAgent(text) {
-    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + text + '"\n\nIf this feedback asks a question, seeks discussion, or needs confirmation, call interactive_feedback to respond. If it is guidance or instructions, adjust your plan and continue working.';
+    return '[User Feedback] The user has submitted new feedback. Read it carefully and adjust your plan accordingly:\n\n"' + text + '"\n\nIf this feedback asks a question, seeks discussion, or needs confirmation, call interactive_feedback to respond. If it is guidance or instructions, adjust your plan and continue working.' + FEEDBACK_REMINDER;
 }
 
 function fmtUser(text) {
