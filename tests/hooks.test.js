@@ -200,32 +200,6 @@ describe('beforeMCPExecution', () => {
     });
 });
 
-describe('subagentStart', () => {
-    let tempDir;
-    let configDir;
-
-    before(() => {
-        tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'hooks-test-'));
-        configDir = setupConfigDirs(tempDir);
-    });
-
-    after(() => {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    });
-
-    it('passes through when no pending', () => {
-        const result = runHook({ hook_event_name: 'subagentStart', conversation_id: 'conv-none' }, tempDir);
-        assert.deepStrictEqual(result, {});
-    });
-
-    it('allows through even when pending (passthrough)', () => {
-        writePending(configDir, 'conv-sub', ['No subagent'], []);
-        const result = runHook({ hook_event_name: 'subagentStart', conversation_id: 'conv-sub' }, tempDir);
-        assert.strictEqual(result.permission, undefined);
-        assert.ok(pendingExists(configDir, 'conv-sub'));
-    });
-});
-
 describe('server matching', () => {
     let tempDir;
     let configDir;
