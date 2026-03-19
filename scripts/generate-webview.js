@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 /**
- * Copies static/panel.html to out/webview/panel.html for packaging.
- * The HTML file is a single self-contained file with inline CSS and JS.
+ * Copies static/panel.html to out/webview/panel.html with panelState.js inlined.
+ * The placeholder `/* PANELSTATE_PLACEHOLDER *​/` in panel.html is replaced
+ * with the contents of static/panelState.js.
  */
 
 const fs = require('fs');
@@ -23,8 +24,14 @@ let html = fs.readFileSync(htmlSrc, 'utf8');
 
 if (fs.existsSync(stateSrc)) {
     const stateJs = fs.readFileSync(stateSrc, 'utf8');
-    html = html.replace('<script>', '<script>\n// -- panelState.js (inlined) --\n' + stateJs + '\n// -- end panelState.js --\n');
-    console.log('[generate-webview] Inlined panelState.js into panel.html');
+    const placeholder = '/* PANELSTATE_PLACEHOLDER */';
+    if (html.includes(placeholder)) {
+        html = html.replace(placeholder, stateJs);
+        console.log('[generate-webview] Inlined panelState.js into panel.html via placeholder');
+    } else {
+        html = html.replace('<script>', '<script>\n// -- panelState.js (inlined) --\n' + stateJs + '\n// -- end panelState.js --\n');
+        console.log('[generate-webview] Inlined panelState.js into panel.html (fallback)');
+    }
 }
 
 fs.writeFileSync(dest, html, 'utf8');

@@ -224,45 +224,4 @@ export function validateMessage<T extends z.ZodType>(
     return result.data;
 }
 
-// ─── 8. Panel validators (for generate-webview.js → panel.html) ─────────────
-
-/**
- * Returns a JS string of simple runtime validators for panel.html.
- * panel.html cannot use Zod, so these are plain typeof/field checks.
- */
-export function generatePanelValidators(): string {
-    return `
-function validateMsg(msg) {
-    if (!msg || typeof msg !== 'object' || !msg.type) return null;
-    switch (msg.type) {
-        case 'session_updated':
-            if (!msg.session_info?.conversation_id || !msg.session_info?.session_id) return null;
-            if (!msg.session_info.label && !msg.session_info.summary) return null;
-            msg.session_info.label = msg.session_info.label || msg.session_info.summary.slice(0, 60);
-            return msg;
-        case 'session_ended':
-        case 'tab_closed':
-            if (!msg.conversation_id) return null;
-            return msg;
-        case 'conversations_list':
-            if (!Array.isArray(msg.conversations)) return null;
-            return msg;
-        case 'conversation_loaded':
-            if (!msg.conversation?.conversation_id) return null;
-            return msg;
-        case 'pending_delivered':
-        case 'pending_synced':
-            if (!msg.conversation_id) return null;
-            if (!Array.isArray(msg.comments)) msg.comments = [];
-            return msg;
-        case 'feedback_submitted':
-            if (!msg.conversation_id) return null;
-            return msg;
-        case 'session_registered':
-            if (!msg.session?.conversation_id && !msg.conversation?.conversation_id) return null;
-            return msg;
-        default:
-            return msg;
-    }
-}`;
-}
+// generatePanelValidators removed — panel.html now uses PanelState.handleMessage() directly.
