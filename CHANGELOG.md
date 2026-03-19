@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.4] - 2026-03-19
+
+### HTTP-Based Pending System & Hook Refactor
+
+Complete replacement of file-based pending message system with HTTP endpoints and in-memory storage. Hooks refactored into modular scripts with shared utilities.
+
+### Added
+- **HTTP Endpoints**: `GET /pending/:id` and `GET /health` on the existing WebSocket server for pending message retrieval.
+- **preToolUse Hook** (`consume-pending.js`): Dedicated hook that intercepts tool calls to deliver queued pending messages mid-conversation. Supports allowlisted/passthrough tools.
+- **Shared Hook Utilities** (`hook-utils.js`): Extracted common functions (`log`, `output`, `readStdin`, `httpGet`, `getServerPort`, `findServer`) to reduce duplication across hook scripts.
+- **Feedback Reminder**: All `interactive_feedback` responses and pending deliveries now include a trailing reminder to call `interactive_feedback` before ending.
+- **Server Discovery Fallback**: `preToolUse` hook falls back to workspace-based server discovery when `MCP_FEEDBACK_SERVER_PID` is stale or missing.
+- **Legacy Cleanup**: Extension auto-migrates old `pending/` directory and removes retired hook entries (`stop`, `check-pending.js`) on activation.
+
+### Changed
+- **Pending Storage**: Moved from file-based (`pending/<id>.json`) to in-memory `Map<string, PendingEntry>` — eliminates file I/O, polling, and race conditions.
+- **Pending Delivery**: Hooks now consume pending via `HTTP GET /pending/:id?consume=1` instead of file reads and deletes.
+- **Hook Architecture**: Split monolithic `check-pending.js` into `session-start.js` (sessionStart only) + `consume-pending.js` (preToolUse only) + `hook-utils.js` (shared).
+- **Hook Registration**: Uses object format for per-hook options (e.g., `loop_limit`). Retired hooks are auto-cleaned from `hooks.json`.
+- **Active Hooks**: Reduced from 6 to 2 — `sessionStart` and `preToolUse`. Removed `beforeShellExecution`, `beforeMCPExecution`, `subagentStart`, and `stop` (redundant with `preToolUse`).
+
+### Removed
+- **File-based pending**: `readPending`, `writePending`, `deletePending`, `getPendingDir`, `cleanupStalePending`, `cleanupLegacyPending` from `fileStore.ts`.
+- **`PendingData` type**: No longer needed (in-memory entries use `PendingEntry`).
+- **`stop` hook**: `followup_message` creates an infinite agent loop — removed entirely.
+- **`check-pending.js`**: Replaced by `session-start.js` + `consume-pending.js`.
+
+## [2.1.2] - 2026-03-18
+
+### Session Queue & Hook Cleanup
+
+- **Session Queue**: Concurrent feedback requests are queued per conversation instead of rejecting duplicates.
+- **Disabled Hooks**: Removed `stop`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, and `subagentStart` hook handlers from `check-pending.js` (redundant with new architecture).
+- **Test Cleanup**: Removed tests for disabled hooks (`stop`, `preToolUse`, `subagentStart`).
+
 ## [2.0.0] - 2026-03-09
 
 ### Full Rewrite — Multi-Session Architecture

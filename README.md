@@ -6,12 +6,12 @@
 
 - **Multi-Session Tabs**: Each Cursor agent conversation gets its own isolated tab — messages, pending queue, and images are fully separated by `conversation_id` (Cursor UUID).
 - **Rich Feedback UI**: Bottom panel with chat bubbles (AI left, user right), markdown support, image input (paste/drag-drop/file picker), and quick replies.
-- **Cursor Hooks Integration**: Pending user messages are injected into the agent loop in real time via `sessionStart`, `preToolUse`, `beforeShellExecution`, `beforeMCPExecution`, `subagentStart`, and `stop` hooks.
-- **Pending Queue**: Queue messages and images while the agent is busy — they are delivered at the next hook trigger point with a `📤 pending` badge on the chat bubble.
+- **Cursor Hooks Integration**: Pending user messages are injected into the agent loop in real time via `sessionStart` and `preToolUse` hooks, using HTTP-based delivery from the extension's in-memory store.
+- **Pending Queue**: Queue messages and images while the agent is busy — they are delivered at the next tool call via the `preToolUse` hook. Delivered pending messages appear as user bubbles with a `📤 pending` badge.
 - **Auto-Configuration**: Automatically sets up `~/.cursor/mcp.json` and `~/.cursor/hooks.json` on activation.
 - **Auto-Focus**: Bottom panel activates automatically on extension startup and when the agent requests feedback.
 - **Image Support**: Paste (Cmd+V), drag-drop, or file picker for images. Images are displayed in chat, included in pending messages, and passed to the LLM via MCP image responses.
-- **Persistent State**: Conversations survive restarts via file-based storage (`~/.config/mcp-feedback-enhanced/`). Input drafts are preserved per tab via `localStorage`.
+- **Persistent State**: Conversations survive restarts via file-based storage (`~/.config/mcp-feedback-enhanced/`). Pending messages are held in-memory and restored from conversation state. Input drafts are preserved per tab via `localStorage`.
 - **Secure & Local**: All data stays on your machine.
 
 ## Getting Started
@@ -38,7 +38,7 @@ The extension auto-configures `~/.cursor/mcp.json`:
 The MCP server is bundled with the extension; the path above uses the VS Code extension directory (use your installed version in place of `2.0.8` if different).
 
 ### 3. Verify Cursor Hooks
-The extension auto-deploys `~/.cursor/hooks.json` with entries for all 6 hook points. This enables real-time pending message injection.
+The extension auto-deploys `~/.cursor/hooks.json` with `sessionStart` and `preToolUse` hooks. This enables real-time pending message injection via HTTP.
 
 ### 4. Usage
 1. The AI Agent calls `interactive_feedback` with a `summary` and `conversation_id`.
@@ -46,27 +46,26 @@ The extension auto-deploys `~/.cursor/hooks.json` with entries for all 6 hook po
 3. Type your feedback, attach images, or click a **Quick Reply**.
 4. The AI receives your input and proceeds.
 
-**Pending Messages**: Submit a message anytime via the panel. If the agent is busy, the message is queued and injected at the next hook trigger point (tool call, shell execution, MCP call, or agent stop). Delivered pending messages appear as user bubbles with a `📤 pending` badge.
+**Pending Messages**: Submit a message anytime via the panel. If the agent is busy, the message is queued in-memory and injected at the next tool call via the `preToolUse` hook. Delivered pending messages appear as user bubbles with a `📤 pending` badge.
 
 ## Architecture
 
 ```
 ┌───────────────┐     WebSocket     ┌──────────────────┐     stdio     ┌─────────────┐
 │  Webview Panel │◄────────────────►│  Extension (Hub)  │◄────────────►│  MCP Server  │
-│  (Bottom)      │                  │  wsServer.ts      │              │  mcp-server/ │
+│  (Bottom)      │                  │  wsHub.ts         │              │  mcp-server/ │
 └───────────────┘                   └──────────────────┘               └─────────────┘
-                                           │
-                              writes pending/<conv_id>.json
-                                           │
-                                    ┌──────▼──────┐
-                                    │ Cursor Hooks │ (check-pending.js)
-                                    │  sessionStart│ → inject conversation_id + rules
-                                    │  preToolUse  │ → deny + inject pending
-                                    │  beforeShell │ → block + inject pending
-                                    │  beforeMCP   │ → deny + inject pending
-                                    │  subagentStart → block + inject pending
-                                    │  stop        │ → deliver pending / remind
-                                    └─────────────┘
+                                      │ HTTP endpoints │
+                                      │ /pending/:id   │
+                                      │ /health        │
+                                      └───────┬────────┘
+                                              │ HTTP GET
+                                       ┌──────▼──────┐
+                                       │ Cursor Hooks │
+                                       │  session-start.js │ → inject conv_id + rules
+                                       │  consume-pending.js│ → deny + inject pending
+                                       │  hook-utils.js     │ → shared utilities
+                                       └─────────────┘
 ```
 
 ### State Storage
@@ -74,9 +73,12 @@ The extension auto-deploys `~/.cursor/hooks.json` with entries for all 6 hook po
 ```
 ~/.config/mcp-feedback-enhanced/
 ├── conversations/<conversation_id>.json   # Chat history, state, labels
-├── pending/<conversation_id>.json         # Queued messages + images
 ├── servers/<pid>.json                     # Running extension instances
-└── sessions/<conversation_id>.json        # Hook-registered sessions
+├── sessions/<conversation_id>.json        # Hook-registered sessions
+└── logs/hooks.log                         # Hook debug log
+
+In-memory (extension process):
+└── pendingManager: Map<conversation_id, PendingEntry>  # Queued messages + images
 ```
 
 ### Conversation Isolation

@@ -12,7 +12,8 @@
 │  │                    VSCode Extension Process                       │ │
 │  │                                                                   │ │
 │  │  extension.ts         → Activates extension, registers providers  │ │
-│  │  wsServer.ts          → WebSocket Hub, conversation state         │ │
+│  │  wsHub.ts             → WebSocket Hub + HTTP endpoints            │ │
+│  │  pendingManager.ts   → In-memory pending queue (Map)              │ │
 │  │  feedbackViewProvider → Loads panel.html, handles messages        │ │
 │  │  fileStore.ts         → JSON file I/O for state persistence       │ │
 │  │  types.ts             → Shared type definitions                   │ │
@@ -39,10 +40,16 @@
 ```
 ~/.config/mcp-feedback-enhanced/
 ├── conversations/<conversation_id>.json   # Per-session chat history + state
-├── pending/<conversation_id>.json         # Queued user messages + images
 ├── servers/<pid>.json                     # Running extension instances
 ├── sessions/<conversation_id>.json        # Hook-registered sessions
+├── hooks/                                 # Deployed hook scripts
+│   ├── hook-utils.js                      # Shared utilities
+│   ├── session-start.js                   # sessionStart hook
+│   └── consume-pending.js                # preToolUse hook
 └── logs/hooks.log                         # Hook debug log
+
+In-memory (extension process):
+└── pendingManager: Map<conv_id, PendingEntry>  # Queued user messages + images
 ```
 
 ### Data Flow
@@ -60,19 +67,20 @@ User submits feedback:
 │ (panel)    │    │ (extension)  │    │ (stdio)       │    │          │
 └────────────┘    └──────────────┘    └───────────────┘    └──────────┘
 
-Pending message injection (via Cursor Hooks):
-┌────────────┐  queue-pending  ┌──────────────┐  writes  ┌──────────────────┐
-│ Webview    │────────────────►│ WS Server    │────────►│ pending/<id>.json │
-└────────────┘                 └──────────────┘          └────────┬─────────┘
-                                                                  │ reads
-                                                           ┌──────▼──────┐
-                                                           │ Cursor Hook │
-                                                           │ (deny/block)│
-                                                           └──────┬──────┘
-                                                                  │ inject
-                                                           ┌──────▼──────┐
-                                                           │ AI Agent    │
-                                                           └─────────────┘
+Pending message injection (via Cursor Hooks + HTTP):
+┌────────────┐  queue-pending  ┌──────────────┐  in-memory  ┌───────────────┐
+│ Webview    │────────────────►│ WS Hub       │────────────►│ PendingManager│
+└────────────┘                 └──────────────┘              └───────┬───────┘
+                                      ▲                              │
+                                      │ HTTP GET /pending/:id        │
+                                ┌─────┴──────┐                       │
+                                │ Cursor Hook │◄─────────────────────┘
+                                │ (preToolUse)│   consume pending
+                                └──────┬──────┘
+                                       │ deny + inject
+                                ┌──────▼──────┐
+                                │ AI Agent    │
+                                └─────────────┘
 ```
 
 ### Key Design: Conversation Isolation
@@ -92,9 +100,13 @@ No fallback resolution — if the ID doesn't match, a new conversation is create
 ```
 mcp-feedback-enhanced/
 ├── src/
-│   ├── extension.ts            # Extension activation, provider registration
+│   ├── extension.ts            # Extension activation, hook deployment
 │   ├── feedbackViewProvider.ts  # Webview panel management
-│   ├── wsServer.ts              # WebSocket server (Hub) + conversation state
+│   ├── server/
+│   │   ├── wsHub.ts            # WebSocket Hub + HTTP endpoints
+│   │   ├── pendingManager.ts   # In-memory pending queue
+│   │   ├── feedbackManager.ts  # Feedback request lifecycle
+│   │   └── conversationStore.ts# Conversation persistence
 │   ├── fileStore.ts             # JSON file I/O helpers
 │   └── types.ts                 # Shared TypeScript interfaces
 │
@@ -103,7 +115,9 @@ mcp-feedback-enhanced/
 │
 ├── scripts/
 │   └── hooks/
-│       └── check-pending.js     # Cursor Hook for pending injection
+│       ├── hook-utils.js        # Shared utilities (log, httpGet, findServer)
+│       ├── session-start.js     # sessionStart hook
+│       └── consume-pending.js   # preToolUse hook
 │
 ├── mcp-server/
 │   └── src/
@@ -135,11 +149,11 @@ mcp-feedback-enhanced/
 2. Run: `npm run compile`
 3. In Cursor: `Cmd+Shift+P` → "Developer: Reload Window"
 
-### For Hook Changes (scripts/hooks/check-pending.js)
+### For Hook Changes (scripts/hooks/*.js)
 
-1. Edit `scripts/hooks/check-pending.js`
-2. Run: `npm run compile` (copies to out/)
-3. Changes take effect on next hook trigger (no restart needed)
+1. Edit hook scripts in `scripts/hooks/`
+2. Run: `npm run compile` then re-package and install the VSIX
+3. Reload window — extension re-deploys hooks to `~/.config/mcp-feedback-enhanced/hooks/`
 
 ### For MCP Server Changes (mcp-server/src/*.ts)
 
