@@ -61,8 +61,8 @@
             return 'idle';
         }
 
-        get pendingSessionId() {
-            return this.sessionQueue.length > 0 ? this.sessionQueue[0].sessionId : null;
+        get hasWaitingSession() {
+            return this.sessionQueue.length > 0;
         }
 
         // ── Message handling (WS -> State -> Commands) ──────
@@ -102,12 +102,9 @@
             this.pendingQueue = msg.pending_comments || [];
             this.pendingImages = msg.pending_images || [];
 
-            var pendingSessions = msg.pending_sessions || [];
-            for (var i = 0; i < pendingSessions.length; i++) {
-                var sid = pendingSessions[i];
-                if (!this.sessionQueue.some(function (s) { return s.sessionId === sid; })) {
-                    this.sessionQueue.push({ sessionId: sid, summary: '' });
-                }
+            var serverCount = msg.feedback_queue_size || 0;
+            while (this.sessionQueue.length < serverCount) {
+                this.sessionQueue.push({ summary: '' });
             }
 
             return [
@@ -117,16 +114,17 @@
         }
 
         _onSessionUpdated(msg) {
-            var info = msg.session_info;
-            if (!info || !info.session_id) return [];
+            this.sessionQueue.push({ summary: msg.summary || '' });
 
-            var alreadyQueued = this.sessionQueue.some(function (s) { return s.sessionId === info.session_id; });
-            if (!alreadyQueued) {
-                this.sessionQueue.push({ sessionId: info.session_id, summary: info.summary || '' });
-            }
+            this.messages.push({
+                role: 'ai',
+                content: msg.summary || '',
+                timestamp: new Date().toISOString(),
+            });
 
             var cmds = [
                 render('messages', 'pending', 'input'),
+                dom('save_state'),
                 notify({ type: 'new-session' }),
             ];
 
@@ -157,7 +155,6 @@
                     commands: cmds,
                     autoReply: {
                         text: this.autoReplyText,
-                        sessionId: info.session_id,
                         delay: 500,
                     },
                 };
@@ -179,11 +176,7 @@
                 }
             }
 
-            if (msg.session_id) {
-                this.sessionQueue = this.sessionQueue.filter(function (s) { return s.sessionId !== msg.session_id; });
-            } else {
-                this.sessionQueue.shift();
-            }
+            this.sessionQueue.shift();
 
             return [
                 render('messages', 'input'),
@@ -230,32 +223,36 @@
             return this.addToPending(text, images);
         }
 
-        submitFeedback(text, images) {
+        submitFeedback(text, images, opts) {
             if (this.sessionQueue.length === 0) return [];
 
-            var entry = this.sessionQueue.shift();
-            var msgImages = images && images.length > 0 ? images : undefined;
+            this.sessionQueue.shift();
             this.messages.push({
                 role: 'user',
                 content: text || '',
                 timestamp: new Date().toISOString(),
-                images: msgImages,
+                images: images && images.length > 0 ? images : undefined,
             });
-            this.stagedImages = [];
 
-            return [
+            var cmds = [
                 wsSend({
                     type: 'feedback_response',
-                    session_id: entry.sessionId,
                     feedback: text || '',
                     images: images || [],
                 }),
                 render('messages', 'input'),
-                dom('clear_input'),
-                dom('clear_staged_images'),
-                dom('save_state'),
-                notify({ type: 'feedback-submitted' }),
             ];
+
+            if (!opts || !opts.preserveInput) {
+                this.stagedImages = [];
+                this.inputDraft = '';
+                cmds.push(dom('clear_input'));
+                cmds.push(dom('clear_staged_images'));
+            }
+
+            cmds.push(dom('save_state'));
+            cmds.push(notify({ type: 'feedback-submitted' }));
+            return cmds;
         }
 
         addToPending(text, images) {
@@ -266,6 +263,7 @@
             if (hasText) this.pendingQueue.push(text.trim());
             if (hasImages) this.pendingImages = [].concat(this.pendingImages || [], images);
             this.stagedImages = [];
+            this.inputDraft = '';
 
             return [
                 wsSend({

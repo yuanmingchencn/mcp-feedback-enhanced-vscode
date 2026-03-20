@@ -7,9 +7,9 @@
  * uses an isolated config directory for test isolation.
  */
 
-const fs = require('fs');
-const path = require('path');
-const os = require('os');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 const { describe, it, after } = require('node:test');
 const assert = require('node:assert');
 
@@ -18,7 +18,7 @@ process.env.HOME = testConfigDir;
 
 const WebSocket = require('ws');
 const { FeedbackWSServer } = require('../out/wsServer');
-const http = require('http');
+const http = require('node:http');
 
 // ─── Helpers ──────────────────────────────────────────────
 
@@ -51,6 +51,11 @@ function createClientAndEstablish(port) {
 }
 
 function sendAndWait(ws, msg, matchType, timeout = 5000) {
+    ws.send(JSON.stringify(msg));
+    return waitForTypedMessage(ws, matchType, timeout);
+}
+
+function waitForTypedMessage(ws, matchType, timeout = 5000) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${matchType}`)), timeout);
         const handler = (raw) => {
@@ -62,23 +67,11 @@ function sendAndWait(ws, msg, matchType, timeout = 5000) {
             }
         };
         ws.on('message', handler);
-        ws.send(JSON.stringify(msg));
     });
 }
 
 function waitForMessage(ws, matchType, timeout = 5000) {
-    return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`Timeout waiting for ${matchType}`)), timeout);
-        const handler = (raw) => {
-            const data = JSON.parse(raw.toString());
-            if (data.type === matchType) {
-                clearTimeout(timer);
-                ws.off('message', handler);
-                resolve(data);
-            }
-        };
-        ws.on('message', handler);
-    });
+    return waitForTypedMessage(ws, matchType, timeout);
 }
 
 function yieldToEventLoop(ms = 20) {
@@ -92,10 +85,6 @@ function closeClient(ws) {
             ws.close();
         } else { resolve(); }
     });
-}
-
-function uniqueId(prefix = 'sess') {
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
 // ─── Test Setup ───────────────────────────────────────────
@@ -168,6 +157,18 @@ describe('client registration', () => {
             assert.strictEqual(mcpServers, 1);
         } finally { await closeClient(ws); }
     });
+
+    it('returns protocol_error for invalid register payload', async () => {
+        await startFreshServer();
+        const { ws } = await createClientAndEstablish(serverPort);
+        try {
+            const protocolError = waitForMessage(ws, 'protocol_error');
+            ws.send(JSON.stringify({ type: 'register' }));
+            const msg = await protocolError;
+            assert.strictEqual(msg.type, 'protocol_error');
+            assert.ok(String(msg.error).includes('register'));
+        } finally { await closeClient(ws); }
+    });
 });
 
 describe('feedback flow', () => {
@@ -175,7 +176,6 @@ describe('feedback flow', () => {
 
     it('routes feedback_request from MCP to webview as session_updated', async () => {
         await startFreshServer();
-        const sessionId = uniqueId();
         const summary = 'Test summary';
 
         const { ws: mcpWs } = await createClientAndEstablish(serverPort);
@@ -188,13 +188,11 @@ describe('feedback flow', () => {
             const sessionUpdated = waitForMessage(webviewWs, 'session_updated');
             mcpWs.send(JSON.stringify({
                 type: 'feedback_request',
-                session_id: sessionId,
                 summary,
             }));
 
             const msg = await sessionUpdated;
-            assert.strictEqual(msg.session_info.session_id, sessionId);
-            assert.strictEqual(msg.session_info.summary, summary);
+            assert.strictEqual(msg.summary, summary);
         } finally {
             await closeClient(mcpWs);
             await closeClient(webviewWs);
@@ -203,7 +201,6 @@ describe('feedback flow', () => {
 
     it('routes feedback_response from webview to MCP as feedback_result', async () => {
         await startFreshServer();
-        const sessionId = uniqueId();
         const feedbackText = 'User feedback text';
 
         const { ws: mcpWs } = await createClientAndEstablish(serverPort);
@@ -216,20 +213,17 @@ describe('feedback flow', () => {
             const feedbackResult = waitForMessage(mcpWs, 'feedback_result');
             mcpWs.send(JSON.stringify({
                 type: 'feedback_request',
-                session_id: sessionId,
                 summary: 'Summary',
             }));
 
             await waitForMessage(webviewWs, 'session_updated');
             webviewWs.send(JSON.stringify({
                 type: 'feedback_response',
-                session_id: sessionId,
                 feedback: feedbackText,
             }));
 
             const msg = await feedbackResult;
-            assert.strictEqual(msg.session_id, sessionId);
-            assert.strictEqual(msg.success, true);
+            assert.strictEqual(msg.type, 'feedback_result');
             assert.ok(msg.feedback.includes(feedbackText));
         } finally {
             await closeClient(mcpWs);
@@ -320,7 +314,6 @@ describe('state sync', () => {
 
     it('returns state on get_state', async () => {
         await startFreshServer();
-        const sessionId = uniqueId();
 
         const { ws: mcpWs } = await createClientAndEstablish(serverPort);
         const { ws: webviewWs } = await createClientAndEstablish(serverPort);
@@ -331,7 +324,6 @@ describe('state sync', () => {
 
             mcpWs.send(JSON.stringify({
                 type: 'feedback_request',
-                session_id: sessionId,
                 summary: 'Summary for state sync',
             }));
             await waitForMessage(webviewWs, 'session_updated');
@@ -340,8 +332,8 @@ describe('state sync', () => {
             assert.ok(Array.isArray(msg.messages));
             assert.ok(msg.messages.length >= 1);
             assert.strictEqual(msg.messages[0].role, 'ai');
-            assert.ok(Array.isArray(msg.pending_sessions));
-            assert.ok(msg.pending_sessions.includes(sessionId));
+            assert.strictEqual(typeof msg.feedback_queue_size, 'number');
+            assert.ok(msg.feedback_queue_size >= 1);
         } finally {
             await closeClient(mcpWs);
             await closeClient(webviewWs);

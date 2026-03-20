@@ -1,7 +1,9 @@
 /**
- * Manages the lifecycle of feedback requests.
- * Each request is a Promise that resolves when the user responds.
- * Keyed by session_id only — no conversation_id.
+ * FIFO queue of pending feedback requests.
+ *
+ * On MCP disconnect, sessions stay alive so the panel can respond.
+ * On reconnect for the same project, transport is swapped via updateTransport().
+ * resolve returns the *current* transport (not the one captured at enqueue time).
  */
 
 import { WebSocket } from 'ws';
@@ -11,54 +13,57 @@ export interface FeedbackResult {
     images?: string[];
 }
 
+export interface ResolvedFeedback extends FeedbackResult {
+    transport: WebSocket;
+}
+
 interface PendingFeedback {
-    sessionId: string;
     mcpClient: WebSocket;
-    resolve: (result: FeedbackResult) => void;
+    projectDir?: string;
+    resolve: (result: ResolvedFeedback) => void;
     reject: (error: Error) => void;
 }
 
 export class FeedbackManager {
-    private pending = new Map<string, PendingFeedback>();
+    private queue: PendingFeedback[] = [];
 
-    createRequest(
-        sessionId: string,
-        mcpClient: WebSocket
-    ): Promise<FeedbackResult> {
-        return new Promise<FeedbackResult>((resolve, reject) => {
-            this.pending.set(sessionId, { sessionId, mcpClient, resolve, reject });
+    enqueue(mcpClient: WebSocket, projectDir?: string): Promise<ResolvedFeedback> {
+        return new Promise<ResolvedFeedback>((resolve, reject) => {
+            this.queue.push({ mcpClient, projectDir, resolve, reject });
         });
     }
 
-    resolve(sessionId: string, result: FeedbackResult): boolean {
-        const req = this.pending.get(sessionId);
-        if (!req) return false;
-        req.resolve(result);
-        this.pending.delete(sessionId);
+    resolveFirst(result: FeedbackResult): boolean {
+        const entry = this.queue.shift();
+        if (!entry) return false;
+        entry.resolve({ ...result, transport: entry.mcpClient });
         return true;
     }
 
-    rejectByClient(ws: WebSocket): void {
-        for (const [sid, req] of this.pending) {
-            if (req.mcpClient === ws) {
-                req.reject(new Error('MCP client disconnected'));
-                this.pending.delete(sid);
+    updateTransport(newWs: WebSocket, projectDir?: string): boolean {
+        if (!projectDir) return false;
+        let updated = false;
+        for (const entry of this.queue) {
+            if (entry.projectDir && entry.projectDir === projectDir) {
+                entry.mcpClient = newWs;
+                updated = true;
             }
         }
+        return updated;
     }
 
     hasPending(): boolean {
-        return this.pending.size > 0;
+        return this.queue.length > 0;
     }
 
-    pendingSessionIds(): string[] {
-        return Array.from(this.pending.keys());
+    pendingCount(): number {
+        return this.queue.length;
     }
 
     rejectAll(error: Error): void {
-        for (const [, req] of this.pending) {
-            req.reject(error);
+        for (const entry of this.queue) {
+            entry.reject(error);
         }
-        this.pending.clear();
+        this.queue = [];
     }
 }

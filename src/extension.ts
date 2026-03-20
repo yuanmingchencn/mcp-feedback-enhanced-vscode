@@ -13,12 +13,34 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+import { exec } from 'child_process';
 import { FeedbackWSServer } from './wsServer';
 import { FeedbackViewProvider } from './feedbackViewProvider';
 
 let wsServer: FeedbackWSServer;
 let bottomProvider: FeedbackViewProvider;
 const disposables: vscode.Disposable[] = [];
+
+const REMINDER_DELAYS = [0, 60_000, 120_000, 300_000];
+let reminderTimers: ReturnType<typeof setTimeout>[] = [];
+
+function playSystemSound(): void {
+    if (process.platform === 'darwin') {
+        exec('afplay /System/Library/Sounds/Funk.aiff');
+    }
+}
+
+function startFeedbackReminders(): void {
+    cancelFeedbackReminders();
+    for (const delay of REMINDER_DELAYS) {
+        reminderTimers.push(setTimeout(playSystemSound, delay));
+    }
+}
+
+function cancelFeedbackReminders(): void {
+    for (const t of reminderTimers) clearTimeout(t);
+    reminderTimers = [];
+}
 
 function getWorkspaces(): string[] {
     return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
@@ -44,7 +66,8 @@ function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
 export async function activate(context: vscode.ExtensionContext): Promise<void> {
     // Avoid console.log during activation — it opens the Output panel and steals focus
 
-    wsServer = new FeedbackWSServer();
+    const pkgVersion = (context.extension.packageJSON as { version?: string })?.version ?? '0.0.0';
+    wsServer = new FeedbackWSServer(pkgVersion);
     wsServer.setWorkspaces(getWorkspaces());
 
     let port: number;
@@ -56,10 +79,15 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     }
 
     wsServer.onFeedbackRequest(async () => {
+        startFeedbackReminders();
         try {
             await vscode.commands.executeCommand('workbench.view.extension.mcp-feedback-enhanced-bottom');
             await vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
         } catch { /* ignore */ }
+    });
+
+    wsServer.onFeedbackResolved(() => {
+        cancelFeedbackReminders();
     });
 
     const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
@@ -136,7 +164,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 }
 
 export function deactivate(): void {
-    // Deactivating
+    cancelFeedbackReminders();
     for (const d of disposables) { d.dispose(); }
     disposables.length = 0;
     wsServer?.stop();

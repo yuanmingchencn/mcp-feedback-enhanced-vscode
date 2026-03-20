@@ -1,41 +1,36 @@
 /**
  * WebSocket hub: the central message router.
  *
- * Flat per-window model — no conversation_id routing.
- * One project = one message timeline = one pending queue.
+ * Feedback sessions are keyed by conversation_id (from Cursor),
+ * with fallback to project hash or auto-generated key.
+ * Sessions survive transport disconnection for reconnection.
  */
 
-import * as http from 'http';
-import * as fs from 'fs';
-import * as path from 'path';
-import * as os from 'os';
+import * as http from 'node:http';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
+import * as os from 'node:os';
 import { WebSocket, WebSocketServer } from 'ws';
 import type {
-    FeedbackRequest,
-    FeedbackResponse,
     ConversationMessage,
-    ProjectState,
     WSMessage,
 } from '../types';
 import {
-    validateMessage,
-    FeedbackRequestSchema,
-    FeedbackResponseSchema,
-    QueuePendingSchema,
-    RegisterSchema,
-    DismissFeedbackSchema,
-    GetStateSchema,
-} from '../messageSchemas';
-import {
     writeServer,
     deleteServerByHash,
-    readProject,
-    writeProject,
     projectHash,
     cleanupStaleServers,
 } from '../fileStore';
 import { FeedbackManager } from './feedbackManager';
 import { PendingManager } from './pendingManager';
+import { handleHttpRoute } from './httpRoutes';
+import { ProjectTimeline } from './projectTimeline';
+import { ClientRegistry, type ConnectedClient } from './clientRegistry';
+import { FeedbackFlow } from './feedbackFlow';
+import { bindClientConnectionHandlers } from './connectionHandlers';
+import { findAvailablePort } from './portFinder';
+import { dispatchRouteMessage } from './routeAdapter';
+import { decodeWsMessage } from './wsMessageCodec';
 
 const LOG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'logs');
 function wsLog(msg: string): void {
@@ -53,41 +48,67 @@ function wsLog(msg: string): void {
     } catch { /* ignore */ }
 }
 
-const VERSION = '2.1.0';
 const PORT_RANGE_START = 48200;
 const PORT_RANGE_END = 48300;
 const HEARTBEAT_INTERVAL = 30_000;
 const CLIENT_TIMEOUT = 90_000;
 const MESSAGE_CAP = 500;
 
-interface ConnectedClient {
-    ws: WebSocket;
-    clientType: 'webview' | 'mcp-server' | 'unknown';
-    lastPong: number;
-}
-
-const FEEDBACK_REMINDER = '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
-
 export class WsHub {
     private server: http.Server | null = null;
     private wss: WebSocketServer | null = null;
     private port = 0;
-    private clients = new Map<WebSocket, ConnectedClient>();
+    private readonly version: string;
+    private readonly clients = new ClientRegistry();
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-    private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    private feedback: FeedbackManager;
-    private pending: PendingManager;
+    private readonly feedback: FeedbackManager;
+    private readonly pending: PendingManager;
+    private readonly timeline: ProjectTimeline;
+    private readonly feedbackFlow: FeedbackFlow;
 
     private workspaces: string[] = [];
-    private onFeedbackRequested?: () => void;
 
-    private messages: ConversationMessage[] = [];
-    private projHash = '';
-
-    constructor() {
+    constructor(version = '0.0.0') {
+        this.version = version;
         this.feedback = new FeedbackManager();
         this.pending = new PendingManager();
+        this.timeline = new ProjectTimeline(MESSAGE_CAP);
+        this.feedbackFlow = new FeedbackFlow({
+            feedback: this.feedback,
+            appendReminder: (feedback) => feedback,
+            addMessage: (msg) => this._addMessage(msg),
+            broadcastSessionUpdated: (summary) => {
+                this._broadcastToWebviews({ type: 'session_updated', summary });
+            },
+            broadcastFeedbackSubmitted: (feedback) => {
+                this._broadcastToWebviews({ type: 'feedback_submitted', feedback });
+            },
+            clearPending: () => {
+                this.pending.clear();
+                this._broadcastToWebviews({ type: 'pending_synced', comments: [], images: [] });
+            },
+            queueAsPending: (feedback, images) => {
+                const comments = feedback ? [feedback] : [];
+                this.pending.set(comments, images ?? []);
+                this._broadcastToWebviews({ type: 'pending_synced', comments, images: images ?? [] });
+            },
+            sendResult: (ws, result) => {
+                this._send(ws, {
+                    type: 'feedback_result',
+                    feedback: result.feedback,
+                    images: result.images,
+                });
+            },
+            sendError: (ws, error) => {
+                this._send(ws, {
+                    type: 'feedback_error',
+                    error: error.message,
+                });
+            },
+            onFeedbackRequested: undefined,
+            log: wsLog,
+        });
 
         this.pending.onPendingDelivered((delivery) => {
             this._onPendingDelivered(delivery.comments, delivery.images);
@@ -98,13 +119,15 @@ export class WsHub {
 
     setWorkspaces(workspaces: string[]): void {
         this.workspaces = workspaces;
-        if (workspaces.length > 0) {
-            this.projHash = projectHash(workspaces[0]);
-        }
+        this.timeline.setWorkspaces(workspaces);
     }
 
     onFeedbackRequest(cb: () => void): void {
-        this.onFeedbackRequested = cb;
+        this.feedbackFlow.setOnFeedbackRequested(cb);
+    }
+
+    onFeedbackResolved(cb: () => void): void {
+        this.feedbackFlow.setOnFeedbackResolved(cb);
     }
 
     getPort(): number {
@@ -112,12 +135,7 @@ export class WsHub {
     }
 
     getConnectedClients(): { webviews: number; mcpServers: number } {
-        let webviews = 0, mcpServers = 0;
-        for (const [, c] of this.clients) {
-            if (c.clientType === 'webview') webviews++;
-            else if (c.clientType === 'mcp-server') mcpServers++;
-        }
-        return { webviews, mcpServers };
+        return this.clients.counts();
     }
 
     hasPendingRequests(): boolean {
@@ -135,7 +153,6 @@ export class WsHub {
 
         cleanupStaleServers();
 
-        this._loadProject();
         this.port = await this._findPort();
         await this._startServer();
         this._registerServer();
@@ -154,17 +171,11 @@ export class WsHub {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
-        if (this.saveTimer) {
-            clearTimeout(this.saveTimer);
-            this.saveTimer = null;
-        }
+        this.timeline.dispose();
 
         this.pending.clear();
 
-        for (const [, client] of this.clients) {
-            try { client.ws.close(); } catch { /* ignore */ }
-        }
-        this.clients.clear();
+        this.clients.closeAll();
 
         this.feedback.rejectAll(new Error('Server shutting down'));
 
@@ -176,55 +187,14 @@ export class WsHub {
         }
     }
 
-    // ── Project Persistence ─────────────────────────────────
-
-    private _loadProject(): void {
-        if (!this.projHash) return;
-        const proj = readProject(this.projHash);
-        if (proj) {
-            this.messages = proj.messages.slice(-MESSAGE_CAP);
-        }
-    }
-
-    private _saveProjectDebounced(): void {
-        if (this.saveTimer) return;
-        this.saveTimer = setTimeout(() => {
-            this.saveTimer = null;
-            this._saveProjectNow();
-        }, 1000);
-    }
-
-    private _saveProjectNow(): void {
-        if (!this.projHash || this.workspaces.length === 0) return;
-        const state: ProjectState = {
-            projectPath: this.workspaces[0],
-            messages: this.messages.slice(-MESSAGE_CAP),
-            lastActive: Date.now(),
-        };
-        writeProject(this.projHash, state);
-    }
-
     private _addMessage(msg: ConversationMessage): void {
-        this.messages.push(msg);
-        if (this.messages.length > MESSAGE_CAP) {
-            this.messages = this.messages.slice(-MESSAGE_CAP);
-        }
-        this._saveProjectDebounced();
+        this.timeline.addMessage(msg);
     }
 
     // ── Server Setup ────────────────────────────────────────
 
     private _findPort(): Promise<number> {
-        return new Promise((resolve, reject) => {
-            const tryPort = (port: number) => {
-                if (port > PORT_RANGE_END) { reject(new Error('No available port')); return; }
-                const srv = http.createServer();
-                srv.once('error', () => tryPort(port + 1));
-                srv.once('listening', () => { srv.close(() => resolve(port)); });
-                srv.listen(port, '127.0.0.1');
-            };
-            tryPort(PORT_RANGE_START);
-        });
+        return findAvailablePort(PORT_RANGE_START, PORT_RANGE_END);
     }
 
     private _startServer(): Promise<void> {
@@ -237,31 +207,15 @@ export class WsHub {
     }
 
     private _handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-        const url = new URL(req.url || '/', `http://127.0.0.1:${this.port}`);
-        const pathname = url.pathname;
+        const handled = handleHttpRoute(req, res, {
+            port: this.port,
+            version: this.version,
+            pending: this.pending,
+            log: wsLog,
+        });
+        if (handled) return;
 
         res.setHeader('Content-Type', 'application/json');
-
-        if (req.method === 'GET' && pathname === '/health') {
-            res.writeHead(200);
-            res.end(JSON.stringify({ ok: true, port: this.port, pid: process.pid, version: VERSION }));
-            return;
-        }
-
-        if (req.method === 'GET' && pathname === '/pending') {
-            const consume = url.searchParams.get('consume') === '1';
-            const entry = consume ? this.pending.consume() : this.pending.read();
-            if (entry) {
-                if (consume) wsLog(`HTTP consume pending: comments=${entry.comments.length}`);
-                res.writeHead(200);
-                res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
-            } else {
-                res.writeHead(404);
-                res.end(JSON.stringify({ error: 'no_pending' }));
-            }
-            return;
-        }
-
         res.writeHead(404);
         res.end(JSON.stringify({ error: 'not_found' }));
     }
@@ -272,7 +226,7 @@ export class WsHub {
                 port: this.port,
                 pid: process.pid,
                 projectPath: ws,
-                version: VERSION,
+                version: this.version,
                 started_at: Date.now(),
             });
         }
@@ -281,157 +235,54 @@ export class WsHub {
     // ── Connection Handling ─────────────────────────────────
 
     private _handleConnection(ws: WebSocket): void {
-        const client: ConnectedClient = {
-            ws,
-            clientType: 'unknown',
-            lastPong: Date.now(),
-        };
-        this.clients.set(ws, client);
+        const client = this.clients.add(ws);
 
-        this._send(ws, { type: 'connection_established', version: VERSION, port: this.port });
-
-        ws.on('message', (raw) => {
-            try {
-                const msg = JSON.parse(raw.toString()) as WSMessage;
-                this._routeMessage(ws, client, msg);
-            } catch (e) {
-                console.error('[MCP Feedback] Parse error:', e);
-            }
-        });
-
-        ws.on('pong', () => { client.lastPong = Date.now(); });
-        ws.on('close', () => {
-            this.clients.delete(ws);
-            this.feedback.rejectByClient(ws);
-        });
-        ws.on('error', () => {
-            this.clients.delete(ws);
-            this.feedback.rejectByClient(ws);
+        this._send(ws, { type: 'connection_established', version: this.version, port: this.port });
+        bindClientConnectionHandlers(ws, client, {
+            onParsedMessage: (raw) => {
+                try {
+                    this._routeMessage(ws, client, decodeWsMessage(raw));
+                } catch (e) {
+                    console.error('[MCP Feedback] Parse error:', e);
+                }
+            },
+            onDisconnect: () => {
+                this.clients.remove(ws);
+            },
         });
     }
 
     private _routeMessage(ws: WebSocket, client: ConnectedClient, msg: WSMessage): void {
-        switch (msg.type) {
-            case 'register': {
-                const reg = validateMessage(RegisterSchema, msg, 'register');
-                if (!reg) break;
-                client.clientType = reg.clientType;
+        dispatchRouteMessage(ws, client, msg, {
+            onRegister: (clientType) => {
+                client.clientType = clientType;
                 wsLog(`client registered: type=${client.clientType}`);
-                break;
-            }
-            case 'feedback_request': {
-                const req = validateMessage(FeedbackRequestSchema, msg, 'feedback_request');
-                if (!req) break;
-                this._handleFeedbackRequest(ws, req as FeedbackRequest & { session_id: string });
-                break;
-            }
-            case 'feedback_response': {
-                const res = validateMessage(FeedbackResponseSchema, msg, 'feedback_response');
-                if (!res) break;
-                this._handleFeedbackResponse(res);
-                break;
-            }
-            case 'queue-pending': {
-                const qp = validateMessage(QueuePendingSchema, msg, 'queue-pending');
-                if (!qp) break;
-                this._handleQueuePending(qp);
-                break;
-            }
-            case 'dismiss_feedback': {
-                const df = validateMessage(DismissFeedbackSchema, msg, 'dismiss_feedback');
-                if (!df) break;
-                this._handleDismiss(df.session_id);
-                break;
-            }
-            case 'get_state': {
-                this._sendState(ws);
-                break;
-            }
-            case 'ping':
-            case 'heartbeat':
-                client.lastPong = Date.now();
-                this._send(ws, { type: 'pong' });
-                break;
-        }
+            },
+            onFeedbackRequest: (mcpWs, req) => this._handleFeedbackRequest(mcpWs, req),
+            onFeedbackResponse: (res) => this._handleFeedbackResponse(res),
+            onQueuePending: (qp) => this._handleQueuePending(qp),
+            onDismiss: () => this._handleDismiss(),
+            onGetState: (targetWs) => this._sendState(targetWs),
+            sendPong: (targetWs) => this._send(targetWs, { type: 'pong' }),
+            onProtocolError: (context) => this._send(ws, {
+                type: 'protocol_error',
+                error: `Invalid message: ${context}`,
+            }),
+        });
     }
 
     // ── Feedback Flow ───────────────────────────────────────
 
-    private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest & { session_id: string }): void {
-        wsLog(`feedbackRequest: session=${req.session_id} summary=${req.summary.slice(0, 60)}`);
-        const sessionId = req.session_id;
-
-        this._addMessage({
-            role: 'ai',
-            content: req.summary,
-            timestamp: new Date().toISOString(),
-            session_id: sessionId,
-        });
-
-        const promise = this.feedback.createRequest(sessionId, mcpWs);
-
-        this._broadcastToWebviews({
-            type: 'session_updated',
-            session_info: {
-                session_id: sessionId,
-                summary: req.summary,
-            },
-        });
-
-        if (this.onFeedbackRequested) {
-            this.onFeedbackRequested();
-        }
-
-        promise.then((result) => {
-            this._send(mcpWs, {
-                type: 'feedback_result',
-                session_id: sessionId,
-                success: true,
-                feedback: result.feedback,
-                images: result.images,
-            });
-        }).catch((err) => {
-            this._send(mcpWs, {
-                type: 'feedback_error',
-                session_id: sessionId,
-                error: err.message,
-            });
-        });
+    private _handleFeedbackRequest(mcpWs: WebSocket, req: { summary: string; project_directory?: string }): void {
+        this.feedbackFlow.handleFeedbackRequest(mcpWs, req);
     }
 
-    private _handleFeedbackResponse(res: FeedbackResponse): void {
-        wsLog(`feedbackResponse: session=${res.session_id} feedback=${res.feedback.slice(0, 60)}`);
-
-        this._addMessage({
-            role: 'user',
-            content: res.feedback,
-            timestamp: new Date().toISOString(),
-            session_id: res.session_id,
-            images: res.images,
-        });
-
-        this.pending.clear();
-
-        const feedbackWithReminder = res.feedback + FEEDBACK_REMINDER;
-        this.feedback.resolve(res.session_id, {
-            feedback: feedbackWithReminder,
-            images: res.images ?? undefined,
-        });
-
-        this._broadcastToWebviews({
-            type: 'feedback_submitted',
-            session_id: res.session_id,
-            feedback: res.feedback,
-        });
+    private _handleFeedbackResponse(res: { feedback: string; images?: string[] }): void {
+        this.feedbackFlow.handleFeedbackResponse(res);
     }
 
-    private _handleDismiss(sessionId: string): void {
-        this.feedback.resolve(sessionId, { feedback: '[Dismissed by user]' });
-
-        this._broadcastToWebviews({
-            type: 'feedback_submitted',
-            session_id: sessionId,
-        });
+    private _handleDismiss(): void {
+        this.feedbackFlow.handleDismiss();
     }
 
     // ── Pending Queue ───────────────────────────────────────
@@ -475,10 +326,10 @@ export class WsHub {
         const entry = this.pending.read();
         this._send(ws, {
             type: 'state_sync',
-            messages: this.messages,
+            messages: this.timeline.getMessages(),
             pending_comments: entry?.comments ?? [],
             pending_images: entry?.images ?? [],
-            pending_sessions: this.feedback.pendingSessionIds(),
+            feedback_queue_size: this.feedback.pendingCount(),
         });
     }
 
@@ -486,15 +337,7 @@ export class WsHub {
 
     private _startHeartbeat(): void {
         this.heartbeatTimer = setInterval(() => {
-            const now = Date.now();
-            for (const [ws, client] of this.clients) {
-                if (now - client.lastPong > CLIENT_TIMEOUT) {
-                    try { ws.close(); } catch { /* ignore */ }
-                    this.clients.delete(ws);
-                    continue;
-                }
-                try { ws.ping(); } catch { /* ignore */ }
-            }
+            this.clients.sweepStale(Date.now(), CLIENT_TIMEOUT, () => {});
         }, HEARTBEAT_INTERVAL);
     }
 
@@ -507,10 +350,6 @@ export class WsHub {
     }
 
     private _broadcastToWebviews(data: Record<string, unknown>): void {
-        for (const [ws, client] of this.clients) {
-            if (client.clientType === 'webview') {
-                this._send(ws, data);
-            }
-        }
+        this.clients.forEachWebview((ws) => this._send(ws, data));
     }
 }

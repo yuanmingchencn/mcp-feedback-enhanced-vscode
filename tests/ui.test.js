@@ -31,7 +31,7 @@ describe('UI: session_updated renders', () => {
         const p = new PanelState();
         const cmds = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Task' },
+            summary: 'Task',
         });
         const list = Array.isArray(cmds) ? cmds : cmds.commands;
         assert.ok(hasRender(list, 'messages'));
@@ -42,7 +42,7 @@ describe('UI: session_updated renders', () => {
         const p = new PanelState();
         const cmds = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Task' },
+            summary: 'Task',
         });
         const list = Array.isArray(cmds) ? cmds : cmds.commands;
         assert.ok(hasNotify(list));
@@ -52,10 +52,9 @@ describe('UI: session_updated renders', () => {
 describe('UI: feedback_submitted renders', () => {
     it('renders messages and input on feedback_submitted', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const cmds = p.handleMessage({
             type: 'feedback_submitted',
-            session_id: 's1',
             feedback: 'ok',
         });
         assert.ok(hasRender(cmds, 'messages'));
@@ -109,7 +108,7 @@ describe('UI: state_sync renders', () => {
             messages: [{ role: 'ai', content: 'hi', timestamp: '' }],
             pending_comments: [],
             pending_images: [],
-            pending_sessions: [],
+            feedback_queue_size: 0,
         });
         assert.ok(hasRender(cmds, 'messages'));
         assert.ok(hasRender(cmds, 'pending'));
@@ -127,7 +126,7 @@ describe('UI: button mode', () => {
 
     it('shows Send button when waiting', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const ui = p.getUIState();
         assert.strictEqual(ui.buttonMode, 'send');
     });
@@ -149,7 +148,7 @@ describe('UI: input always visible', () => {
 
     it('input is visible in waiting state', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         assert.strictEqual(p.getUIState().inputVisible, true);
     });
 

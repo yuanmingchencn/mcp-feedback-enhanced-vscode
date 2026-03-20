@@ -41,6 +41,7 @@ describe('PanelState basics', () => {
         assert.strictEqual(p.sessionQueue.length, 0);
         assert.strictEqual(p.pendingQueue.length, 0);
         assert.strictEqual(p.panelMode, 'idle');
+        assert.strictEqual(p.hasWaitingSession, false);
     });
 
     it('getUIState for idle', () => {
@@ -53,7 +54,7 @@ describe('PanelState basics', () => {
 
     it('getUIState for waiting', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const ui = p.getUIState();
         assert.strictEqual(ui.inputVisible, true);
         assert.strictEqual(ui.buttonMode, 'send');
@@ -77,18 +78,18 @@ describe('state transitions', () => {
         const p = new PanelState();
         p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Hi' },
+            summary: 'Hi',
         });
         assert.strictEqual(p.panelMode, 'waiting');
-        assert.strictEqual(p.pendingSessionId, 's1');
+        assert.strictEqual(p.hasWaitingSession, true);
+        assert.strictEqual(p.sessionQueue[0].summary, 'Hi');
     });
 
     it('waiting -> running via feedback_submitted', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         p.handleMessage({
             type: 'feedback_submitted',
-            session_id: 's1',
             feedback: 'ok',
         });
         assert.strictEqual(p.sessionQueue.length, 0);
@@ -100,23 +101,23 @@ describe('state transitions', () => {
         assert.strictEqual(p.panelMode, 'running');
         p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's2', summary: 'Next' },
+            summary: 'Next',
         });
         assert.strictEqual(p.panelMode, 'waiting');
-        assert.strictEqual(p.pendingSessionId, 's2');
+        assert.strictEqual(p.sessionQueue[0].summary, 'Next');
     });
 
     it('full lifecycle: idle -> waiting -> running -> waiting -> idle', () => {
         const p = new PanelState();
         assert.strictEqual(p.panelMode, 'idle');
 
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'First' } });
+        p.handleMessage({ type: 'session_updated', summary: 'First' });
         assert.strictEqual(p.panelMode, 'waiting');
 
         p.submitFeedback('reply1', []);
         assert.strictEqual(p.panelMode, 'running');
 
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's2', summary: 'Second' } });
+        p.handleMessage({ type: 'session_updated', summary: 'Second' });
         assert.strictEqual(p.panelMode, 'waiting');
 
         p.submitFeedback('reply2', []);
@@ -129,7 +130,7 @@ describe('state transitions', () => {
 describe('smartSend', () => {
     it('submits feedback when waiting', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const cmds = p.smartSend('ok', []);
         const ws = getWsSend(cmds, 'feedback_response');
         assert.ok(ws);
@@ -162,7 +163,7 @@ describe('smartSend', () => {
 describe('submitFeedback', () => {
     it('sends feedback_response with images', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const cmds = p.submitFeedback('ok', ['img1']);
         const ws = getWsSend(cmds, 'feedback_response');
         assert.deepStrictEqual(ws.message.images, ['img1']);
@@ -172,14 +173,14 @@ describe('submitFeedback', () => {
 
     it('transitions and clears sessionQueue', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         p.submitFeedback('ok', []);
         assert.strictEqual(p.sessionQueue.length, 0);
     });
 
     it('adds user message', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         p.submitFeedback('my feedback', []);
         const userMsg = p.messages.find(m => m.role === 'user');
         assert.ok(userMsg);
@@ -194,7 +195,7 @@ describe('submitFeedback', () => {
 
     it('clears staged images after submit', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         p.stagedImages = ['img1'];
         p.submitFeedback('ok', []);
         assert.deepStrictEqual(p.stagedImages, []);
@@ -348,7 +349,7 @@ describe('auto-submit', () => {
         p.pendingImages = [];
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Hi' },
+            summary: 'Hi',
         });
         assert.ok(result.autoSubmit);
         assert.strictEqual(result.autoSubmit.text, 'hello');
@@ -361,7 +362,7 @@ describe('auto-submit', () => {
         p.pendingImages = ['img1'];
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Hi' },
+            summary: 'Hi',
         });
         assert.ok(result.autoSubmit);
         assert.strictEqual(result.autoSubmit.text, '(image)');
@@ -374,11 +375,11 @@ describe('auto-submit', () => {
         p.autoReplyText = 'Continue';
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Hi' },
+            summary: 'Hi',
         });
         assert.ok(result.autoReply);
         assert.strictEqual(result.autoReply.text, 'Continue');
-        assert.strictEqual(result.autoReply.sessionId, 's1');
+        assert.strictEqual(result.autoReply.delay, 500);
     });
 });
 
@@ -392,13 +393,13 @@ describe('state_sync', () => {
             messages: [{ role: 'ai', content: 'hello', timestamp: '2025-01-01T00:00:00Z' }],
             pending_comments: ['queued'],
             pending_images: [],
-            pending_sessions: ['s1'],
+            feedback_queue_size: 1,
         });
         assert.strictEqual(p.messages.length, 1);
         assert.strictEqual(p.messages[0].content, 'hello');
         assert.deepStrictEqual(p.pendingQueue, ['queued']);
         assert.strictEqual(p.sessionQueue.length, 1);
-        assert.strictEqual(p.sessionQueue[0].sessionId, 's1');
+        assert.deepStrictEqual(p.sessionQueue[0], { summary: '' });
     });
 });
 
@@ -408,7 +409,7 @@ describe('serialization', () => {
     it('round-trip preserves state', () => {
         const p = new PanelState();
         p.messages = [{ role: 'ai', content: 'hi', timestamp: '' }];
-        p.sessionQueue = [{ sessionId: 's1', summary: '' }];
+        p.sessionQueue = [{ summary: '' }];
         p.pendingQueue = ['pending'];
         p.stagedImages = ['img'];
 
@@ -472,50 +473,53 @@ describe('connection_established', () => {
 describe('multiple feedback queue (FIFO)', () => {
     it('queues multiple session_updated and responds in order', () => {
         const p = new PanelState();
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'First' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's2', summary: 'Second' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's3', summary: 'Third' } });
+        p.handleMessage({ type: 'session_updated', summary: 'First' });
+        p.handleMessage({ type: 'session_updated', summary: 'Second' });
+        p.handleMessage({ type: 'session_updated', summary: 'Third' });
 
         assert.strictEqual(p.sessionQueue.length, 3);
-        assert.strictEqual(p.pendingSessionId, 's1');
+        assert.strictEqual(p.sessionQueue[0].summary, 'First');
+        assert.strictEqual(p.hasWaitingSession, true);
 
         const cmds1 = p.submitFeedback('reply1', []);
         const ws1 = getWsSend(cmds1, 'feedback_response');
-        assert.strictEqual(ws1.message.session_id, 's1');
+        assert.strictEqual(ws1.message.feedback, 'reply1');
         assert.strictEqual(p.sessionQueue.length, 2);
-        assert.strictEqual(p.pendingSessionId, 's2');
+        assert.strictEqual(p.sessionQueue[0].summary, 'Second');
 
         const cmds2 = p.submitFeedback('reply2', []);
         const ws2 = getWsSend(cmds2, 'feedback_response');
-        assert.strictEqual(ws2.message.session_id, 's2');
+        assert.strictEqual(ws2.message.feedback, 'reply2');
         assert.strictEqual(p.sessionQueue.length, 1);
 
         const cmds3 = p.submitFeedback('reply3', []);
         const ws3 = getWsSend(cmds3, 'feedback_response');
-        assert.strictEqual(ws3.message.session_id, 's3');
+        assert.strictEqual(ws3.message.feedback, 'reply3');
         assert.strictEqual(p.sessionQueue.length, 0);
     });
 
-    it('does not duplicate sessions in queue', () => {
+    it('each session_updated appends a queue slot (no id-based dedup)', () => {
         const p = new PanelState();
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'Hi' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'Hi again' } });
-        assert.strictEqual(p.sessionQueue.length, 1);
+        p.handleMessage({ type: 'session_updated', summary: 'Hi' });
+        p.handleMessage({ type: 'session_updated', summary: 'Hi again' });
+        assert.strictEqual(p.sessionQueue.length, 2);
+        assert.strictEqual(p.sessionQueue[0].summary, 'Hi');
+        assert.strictEqual(p.sessionQueue[1].summary, 'Hi again');
     });
 
-    it('feedback_submitted removes specific session from queue', () => {
+    it('feedback_submitted shifts front of session queue', () => {
         const p = new PanelState();
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'A' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's2', summary: 'B' } });
-        p.handleMessage({ type: 'feedback_submitted', session_id: 's1', feedback: 'ok' });
+        p.handleMessage({ type: 'session_updated', summary: 'A' });
+        p.handleMessage({ type: 'session_updated', summary: 'B' });
+        p.handleMessage({ type: 'feedback_submitted', feedback: 'ok' });
         assert.strictEqual(p.sessionQueue.length, 1);
-        assert.strictEqual(p.pendingSessionId, 's2');
+        assert.strictEqual(p.sessionQueue[0].summary, 'B');
     });
 
     it('getUIState reports feedbackQueueSize', () => {
         const p = new PanelState();
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'A' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's2', summary: 'B' } });
+        p.handleMessage({ type: 'session_updated', summary: 'A' });
+        p.handleMessage({ type: 'session_updated', summary: 'B' });
         const ui = p.getUIState();
         assert.strictEqual(ui.feedbackQueueSize, 2);
     });
@@ -599,7 +603,7 @@ describe('scenario: pending before session', () => {
         p.addToPending('pre-queued', []);
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Next' },
+            summary: 'Next',
         });
         assert.ok(result.autoSubmit);
         assert.strictEqual(result.autoSubmit.text, 'pre-queued');
@@ -631,7 +635,7 @@ describe('static methods', () => {
 describe('command types', () => {
     it('all returned items are valid command objects', () => {
         const p = new PanelState();
-        p.sessionQueue.push({ sessionId: 's1', summary: '' });
+        p.sessionQueue.push({ summary: '' });
         const allCmds = p.submitFeedback('ok', ['img']);
         for (const cmd of allCmds) {
             assert.ok(cmd.type, `Command missing type: ${JSON.stringify(cmd)}`);

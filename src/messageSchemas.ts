@@ -14,7 +14,6 @@ export const RegisterSchema = z.object({
 
 export const FeedbackRequestSchema = z.object({
     type: z.literal('feedback_request'),
-    session_id: z.string().min(1),
     summary: z.string().min(1),
     project_directory: z.string().optional(),
 });
@@ -23,7 +22,6 @@ export const FeedbackRequestSchema = z.object({
 
 export const FeedbackResponseSchema = z.object({
     type: z.literal('feedback_response'),
-    session_id: z.string().min(1),
     feedback: z.string(),
     images: z.array(z.string()).optional(),
 });
@@ -36,26 +34,17 @@ export const QueuePendingSchema = z.object({
 
 export const DismissFeedbackSchema = z.object({
     type: z.literal('dismiss_feedback'),
-    session_id: z.string().min(1),
-});
-
-export const GetStateSchema = z.object({
-    type: z.literal('get_state'),
 });
 
 // ─── 3. Outgoing from Extension (to Webview) ───────────────────────────────
 
 export const SessionUpdatedOutSchema = z.object({
     type: z.literal('session_updated'),
-    session_info: z.object({
-        session_id: z.string().min(1),
-        summary: z.string(),
-    }),
+    summary: z.string(),
 });
 
 export const FeedbackSubmittedOutSchema = z.object({
     type: z.literal('feedback_submitted'),
-    session_id: z.string().min(1),
     feedback: z.string().optional(),
 });
 
@@ -77,12 +66,12 @@ export const StateSyncOutSchema = z.object({
         role: z.enum(['ai', 'user', 'system']),
         content: z.string(),
         timestamp: z.string(),
-        session_id: z.string().optional(),
         images: z.array(z.string()).optional(),
         pending_delivered: z.boolean().optional(),
     })),
     pending_comments: z.array(z.string()),
     pending_images: z.array(z.string()),
+    feedback_queue_size: z.number(),
 });
 
 // ─── 4. Hook output schemas (for contract tests) ───────────────────────────

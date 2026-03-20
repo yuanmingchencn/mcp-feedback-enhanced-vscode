@@ -78,10 +78,6 @@ function closeClient(ws) {
     });
 }
 
-function uniqueId(prefix = 'sess') {
-    return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-}
-
 function httpGet(port, urlPath) {
     return new Promise((resolve, reject) => {
         http.get(`http://127.0.0.1:${port}${urlPath}`, (res) => {
@@ -110,7 +106,6 @@ describe('Extension -> Webview contracts', () => {
     after(async () => { if (server) await server.stop(); });
 
     it('session_updated matches SessionUpdatedOutSchema', async () => {
-        const sessionId = uniqueId();
         const summary = 'Test summary';
 
         const { ws: mcpWs } = await createClientAndEstablish(serverPort);
@@ -123,13 +118,12 @@ describe('Extension -> Webview contracts', () => {
             const sessionUpdatedPromise = waitForMessage(webviewWs, 'session_updated');
             mcpWs.send(JSON.stringify({
                 type: 'feedback_request',
-                session_id: sessionId,
                 summary,
             }));
 
             const msg = await sessionUpdatedPromise;
             schemas.SessionUpdatedOutSchema.parse(msg);
-            assert.ok(msg.session_info.session_id, 'session_id must be present');
+            assert.strictEqual(msg.summary, summary);
         } finally {
             await closeClient(mcpWs);
             await closeClient(webviewWs);
@@ -137,8 +131,6 @@ describe('Extension -> Webview contracts', () => {
     });
 
     it('feedback_submitted matches FeedbackSubmittedOutSchema', async () => {
-        const sessionId = uniqueId();
-
         const { ws: mcpWs } = await createClientAndEstablish(serverPort);
         const { ws: webviewWs } = await createClientAndEstablish(serverPort);
         try {
@@ -149,14 +141,12 @@ describe('Extension -> Webview contracts', () => {
             const feedbackSubmittedPromise = waitForMessage(webviewWs, 'feedback_submitted');
             mcpWs.send(JSON.stringify({
                 type: 'feedback_request',
-                session_id: sessionId,
                 summary: 'Summary',
             }));
             await waitForMessage(webviewWs, 'session_updated');
 
             webviewWs.send(JSON.stringify({
                 type: 'feedback_response',
-                session_id: sessionId,
                 feedback: 'User feedback',
             }));
 
@@ -203,7 +193,6 @@ describe('Webview -> Extension contracts', () => {
     it('feedback_response matches FeedbackResponseSchema', () => {
         schemas.FeedbackResponseSchema.parse({
             type: 'feedback_response',
-            session_id: 'sess-123',
             feedback: 'User feedback text',
         });
     });
@@ -227,7 +216,6 @@ describe('MCP -> Extension contracts', () => {
     it('feedback_request matches FeedbackRequestSchema', () => {
         schemas.FeedbackRequestSchema.parse({
             type: 'feedback_request',
-            session_id: 'sess-123',
             summary: 'Session summary',
         });
     });
@@ -236,7 +224,6 @@ describe('MCP -> Extension contracts', () => {
         assert.throws(
             () => schemas.FeedbackRequestSchema.parse({
                 type: 'feedback_request',
-                session_id: 'sess-123',
             }),
             (err) => err.name === 'ZodError'
         );
@@ -262,11 +249,10 @@ describe('Hook output contracts', () => {
 // ─── Schema rejection tests ────────────────────────────────
 
 describe('Schema rejection tests', () => {
-    it('session_updated without session_id is rejected', () => {
+    it('session_updated without summary is rejected', () => {
         assert.throws(
             () => schemas.SessionUpdatedOutSchema.parse({
                 type: 'session_updated',
-                session_info: { summary: 'test' },
             }),
             (err) => err.name === 'ZodError'
         );

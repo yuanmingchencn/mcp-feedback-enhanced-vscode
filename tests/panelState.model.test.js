@@ -26,16 +26,13 @@ class SimpleModel {
 // ── Commands ────────────────────────────────────────────
 
 class FeedbackRequestCmd {
-    constructor(sid) { this.sid = sid; }
+    constructor(seq) { this.seq = seq; }
     check() { return true; }
     run(model, real) {
         const hadPending = model.pendingCount > 0 || model.pendingImageCount > 0;
         const result = real.handleMessage({
             type: 'session_updated',
-            session_info: {
-                session_id: this.sid,
-                summary: 'Summary ' + this.sid,
-            },
+            summary: 'Summary ' + this.seq,
         });
         if (hadPending && result && result.autoSubmit) {
             // Auto-submit consumes pending and submits feedback
@@ -48,7 +45,7 @@ class FeedbackRequestCmd {
             model.sessionQueueLen += 1;
         }
     }
-    toString() { return `FeedbackRequest(${this.sid})`; }
+    toString() { return `FeedbackRequest(${this.seq})`; }
 }
 
 class FeedbackResponseCmd {
@@ -146,11 +143,11 @@ class PendingDeliveredCmd {
 
 // ── Arbitraries ─────────────────────────────────────────
 
-const sids = ['s1', 's2', 's3'];
+const requestSeqs = [1, 2, 3];
 const texts = ['hello', 'fix this', 'looks good'];
 
 const allCommands = [
-    fc.constantFrom(...sids).map(id => new FeedbackRequestCmd(id)),
+    fc.constantFrom(...requestSeqs).map((n) => new FeedbackRequestCmd(n)),
     fc.constant(new FeedbackResponseCmd()),
     fc.constantFrom(...texts).map(t => new QueuePendingCmd(t)),
     fc.constant(new QueuePendingWithImageCmd()),

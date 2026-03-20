@@ -24,7 +24,7 @@ describe('scenario: complete feedback loop', () => {
 
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Task completed' },
+            summary: 'Task completed',
         });
 
         assert.ok(result.autoSubmit, 'should auto-submit pending');
@@ -37,7 +37,7 @@ describe('scenario: complete feedback loop', () => {
 
         p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'First task' },
+            summary: 'First task',
         });
         assert.strictEqual(p.panelMode, 'waiting');
 
@@ -46,10 +46,10 @@ describe('scenario: complete feedback loop', () => {
 
         p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's2', summary: 'Second task' },
+            summary: 'Second task',
         });
         assert.strictEqual(p.panelMode, 'waiting');
-        assert.strictEqual(p.pendingSessionId, 's2');
+        assert.strictEqual(p.hasWaitingSession, true);
     });
 });
 
@@ -62,7 +62,7 @@ describe('scenario: multiple pending then session', () => {
 
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Ready' },
+            summary: 'Ready',
         });
 
         assert.ok(result.autoSubmit);
@@ -80,7 +80,7 @@ describe('scenario: pending with images', () => {
 
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Ready' },
+            summary: 'Ready',
         });
 
         assert.ok(result.autoSubmit);
@@ -97,12 +97,12 @@ describe('scenario: auto-reply', () => {
 
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Done' },
+            summary: 'Done',
         });
 
         assert.ok(result.autoReply);
         assert.strictEqual(result.autoReply.text, 'Continue');
-        assert.strictEqual(result.autoReply.sessionId, 's1');
+        assert.strictEqual(result.autoReply.delay, 500);
     });
 
     it('pending takes priority over auto-reply', () => {
@@ -113,7 +113,7 @@ describe('scenario: auto-reply', () => {
 
         const result = p.handleMessage({
             type: 'session_updated',
-            session_info: { session_id: 's1', summary: 'Done' },
+            summary: 'Done',
         });
 
         assert.ok(result.autoSubmit);
@@ -125,23 +125,27 @@ describe('scenario: FIFO feedback queue', () => {
     it('3 sessions arrive, user responds to each in order', () => {
         const p = new PanelState();
 
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'A' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's2', summary: 'B' } });
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's3', summary: 'C' } });
+        p.handleMessage({ type: 'session_updated', summary: 'A' });
+        p.handleMessage({ type: 'session_updated', summary: 'B' });
+        p.handleMessage({ type: 'session_updated', summary: 'C' });
 
         assert.strictEqual(p.sessionQueue.length, 3);
-        assert.strictEqual(p.pendingSessionId, 's1');
+        assert.strictEqual(p.hasWaitingSession, true);
+        assert.strictEqual(p.sessionQueue[0].summary, 'A');
 
         const cmds1 = p.submitFeedback('reply A', []);
-        assert.strictEqual(getWsSend(cmds1, 'feedback_response').message.session_id, 's1');
-        assert.strictEqual(p.pendingSessionId, 's2');
+        const ws1 = getWsSend(cmds1, 'feedback_response');
+        assert.strictEqual(ws1.message.feedback, 'reply A');
+        assert.strictEqual(p.sessionQueue[0].summary, 'B');
 
         const cmds2 = p.submitFeedback('reply B', []);
-        assert.strictEqual(getWsSend(cmds2, 'feedback_response').message.session_id, 's2');
-        assert.strictEqual(p.pendingSessionId, 's3');
+        const ws2 = getWsSend(cmds2, 'feedback_response');
+        assert.strictEqual(ws2.message.feedback, 'reply B');
+        assert.strictEqual(p.sessionQueue[0].summary, 'C');
 
         const cmds3 = p.submitFeedback('reply C', []);
-        assert.strictEqual(getWsSend(cmds3, 'feedback_response').message.session_id, 's3');
+        const ws3 = getWsSend(cmds3, 'feedback_response');
+        assert.strictEqual(ws3.message.feedback, 'reply C');
         assert.strictEqual(p.sessionQueue.length, 0);
     });
 });
@@ -157,7 +161,7 @@ describe('scenario: state_sync restores', () => {
             ],
             pending_comments: ['pending message'],
             pending_images: [],
-            pending_sessions: ['s1'],
+            feedback_queue_size: 1,
         });
 
         assert.strictEqual(p.messages.length, 2);
@@ -170,7 +174,7 @@ describe('scenario: state_sync restores', () => {
 describe('scenario: serialize/deserialize round trip', () => {
     it('preserves full state across serialization', () => {
         const p = new PanelState();
-        p.handleMessage({ type: 'session_updated', session_info: { session_id: 's1', summary: 'Task' } });
+        p.handleMessage({ type: 'session_updated', summary: 'Task' });
         p.submitFeedback('done', []);
         p.addToPending('next request', []);
         p.stageImage('img1');

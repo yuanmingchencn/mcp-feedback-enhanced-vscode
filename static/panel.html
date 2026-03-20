@@ -417,13 +417,13 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
 
         if (result.autoSubmit) {
             var as = result.autoSubmit;
-            exec(state.submitFeedback(as.text, as.images || []));
+            exec(state.submitFeedback(as.text, as.images || [], { preserveInput: true }));
         }
         if (result.autoReply) {
             var ar = result.autoReply;
             setTimeout(function () {
                 if (state.panelMode === 'waiting') {
-                    exec(state.submitFeedback(ar.text, []));
+                    exec(state.submitFeedback(ar.text, [], { preserveInput: true }));
                 }
             }, ar.delay || 500);
         }
@@ -592,6 +592,7 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
 
     var saveTimer = null;
     inputEl.addEventListener('input', function () {
+        state.inputDraft = inputEl.value;
         updateSendButton();
         clearTimeout(saveTimer);
         saveTimer = setTimeout(saveState, 500);
@@ -872,6 +873,7 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
     // ── Init ────────────────────────────────────────────
 
     loadState();
+    if (state.inputDraft) inputEl.value = state.inputDraft;
     renderMessages();
     renderPending();
     renderStagedImages();

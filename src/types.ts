@@ -9,7 +9,6 @@ export interface ConversationMessage {
     role: 'ai' | 'user' | 'system';
     content: string;
     timestamp: string;
-    session_id?: string;
     images?: string[];
     pending_delivered?: boolean;
 }
@@ -39,23 +38,12 @@ export interface WSMessage {
 // MCP server -> extension
 export interface FeedbackRequest {
     type: 'feedback_request';
-    session_id: string;
     summary: string;
     project_directory?: string;
 }
 
-// Webview -> extension
 export interface FeedbackResponse {
     type: 'feedback_response';
-    session_id: string;
     feedback: string;
     images?: string[];
-}
-
-export interface SessionUpdate {
-    type: 'session_updated';
-    session_info: {
-        session_id: string;
-        summary: string;
-    };
 }

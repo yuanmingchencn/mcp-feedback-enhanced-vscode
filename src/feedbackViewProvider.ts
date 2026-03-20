@@ -178,9 +178,8 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
         vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
     }
 
-    // Hot-reload: watch panel.html for changes in dev mode
     private _setupHotReload(view: vscode.WebviewView): void {
-        if (process.env.NODE_ENV === 'production') { return; }
+        if (!process.env.MCP_FEEDBACK_DEV) { return; }
 
         try {
             const htmlDir = path.join(__dirname, 'webview');
