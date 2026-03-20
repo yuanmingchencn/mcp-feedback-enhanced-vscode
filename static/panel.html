@@ -17,8 +17,6 @@
   --btn-hover:#6d28d9;
   --accent:#f59e0b;
   --accent-glow:rgba(245,158,11,0.15);
-  --tab-active:var(--vscode-tab-activeBackground,#0d1117);
-  --tab-inactive:var(--vscode-tab-inactiveBackground,#161b22);
   --waiting-dot:#f59e0b;
   --success:#10b981;
   --danger:#ef4444;
@@ -38,40 +36,6 @@ body{
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:rgba(124,58,237,0.3);border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:rgba(124,58,237,0.5)}
-.tab-bar{
-  display:flex;align-items:center;height:34px;min-height:34px;
-  background:var(--tab-inactive);
-  border-bottom:1px solid var(--border);
-  overflow-x:auto;scrollbar-width:none;
-  backdrop-filter:blur(8px);
-}
-.tab-bar::-webkit-scrollbar{display:none}
-.tab{
-  display:flex;align-items:center;gap:6px;padding:0 14px;height:100%;
-  cursor:pointer;white-space:nowrap;font-size:11px;color:var(--fg-dim);
-  border-right:1px solid var(--border);flex-shrink:0;
-  transition:all .2s ease;letter-spacing:.3px;text-transform:uppercase;
-}
-.tab:hover{background:var(--surface);color:var(--fg)}
-.tab.active{
-  background:var(--tab-active);color:var(--fg);
-  border-bottom:2px solid var(--btn-bg);
-  box-shadow:0 1px 8px rgba(124,58,237,0.2);
-}
-.tab.ended{opacity:.4;font-style:italic}
-.tab.tab-ended{opacity:.5}
-.tab.tab-ended .dot{background:#666}
-.messages-muted .msg-row{opacity:.6}
-.messages-muted .msg-row .message{filter:grayscale(.3)}
-.tab .dot{width:7px;height:7px;border-radius:50%;display:inline-block;flex-shrink:0}
-.tab .dot.waiting{background:var(--waiting-dot);box-shadow:0 0 6px var(--waiting-dot);animation:glow-pulse 1.5s infinite}
-.tab .dot.running{background:var(--success);box-shadow:0 0 6px var(--success);animation:glow-pulse 2s infinite}
-.tab .dot.idle{background:var(--fg-dim)}
-.tab .close-btn{display:none;margin-left:4px;opacity:.5;cursor:pointer;font-size:13px;transition:opacity .15s}
-.tab:hover .close-btn{display:inline}
-.tab .close-btn:hover{opacity:1;color:var(--danger)}
-.tab-overflow{padding:0 8px;cursor:pointer;color:var(--fg-dim);font-size:14px;flex-shrink:0;transition:color .15s}
-.tab-overflow:hover{color:var(--fg)}
 @keyframes glow-pulse{
   0%,100%{opacity:1;box-shadow:0 0 4px currentColor}
   50%{opacity:.5;box-shadow:0 0 10px currentColor}
@@ -289,10 +253,6 @@ body{
   font-size:12px;margin-top:4px;transition:all .2s;
 }
 .settings-panel input[type="text"]:focus{border-color:var(--btn-bg);outline:none;box-shadow:0 0 0 2px rgba(124,58,237,0.12)}
-body.input-hidden .input-area,
-body.input-hidden .quick-replies,
-body.input-hidden .image-previews,
-body.input-hidden .pending-section{display:none!important}
 .at-dropdown{
   display:none;position:absolute;bottom:100%;left:0;right:0;
   max-height:240px;overflow-y:auto;z-index:100;
@@ -320,10 +280,6 @@ body.input-hidden .pending-section{display:none!important}
 </style>
 </head>
 <body>
-
-<div class="tab-bar" id="tabBar">
-  <div class="tab-overflow" id="tabOverflow" title="All conversations">...</div>
-</div>
 
 <div class="status-bar" id="statusBar">
   <span id="versionLabel" style="opacity:.5;font-size:10px">v2.1.0</span>
@@ -369,7 +325,7 @@ body.input-hidden .pending-section{display:none!important}
     <textarea id="input" placeholder="Type your feedback... (paste image with Cmd+V, @ to reference files)" rows="4"></textarea>
     <div class="input-actions">
       <button class="attach-btn" id="attachBtn" title="Attach image file">&#128206;</button>
-      <button class="send-btn" id="sendBtn" disabled>Send</button>
+      <button class="send-btn" id="sendBtn" disabled>Queue</button>
     </div>
   </div>
 </div>
@@ -392,8 +348,6 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
     var state = new PS.PanelState();
     var vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
 
-    var tabBar = document.getElementById('tabBar');
-    var tabOverflow = document.getElementById('tabOverflow');
     var messagesEl = document.getElementById('messages');
     var emptyState = document.getElementById('emptyState');
     var pendingSection = document.getElementById('pendingSection');
@@ -435,7 +389,6 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
                 case 'render':
                     for (var j = 0; j < cmd.targets.length; j++) {
                         switch (cmd.targets[j]) {
-                            case 'tabs': renderTabBar(); break;
                             case 'messages': renderMessages(); break;
                             case 'pending': renderPending(); break;
                             case 'input': updateSendButton(); break;
@@ -469,12 +422,7 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
         if (result.autoReply) {
             var ar = result.autoReply;
             setTimeout(function () {
-                var tabId = null;
-                state.tabs.forEach(function (t, id) {
-                    if (t.state === 'waiting' && t.pendingSessionId === ar.sessionId) tabId = id;
-                });
-                if (tabId) {
-                    exec(state.switchTab(tabId, inputEl.value));
+                if (state.panelMode === 'waiting') {
                     exec(state.submitFeedback(ar.text, []));
                 }
             }, ar.delay || 500);
@@ -483,18 +431,15 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
 
     // ── Persistence ─────────────────────────────────────
 
-    var STORAGE_KEY = 'mcp-fb-v2-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
+    var STORAGE_KEY = 'mcp-fb-v3-' + PROJECT_PATH.replace(/[^a-zA-Z0-9]/g, '-').slice(-30);
 
     function saveState() {
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state.serialize())); } catch (e) { /* ignore */ }
     }
 
     function syncSettings() {
-        var tab = state.activeTabId ? state.tabs.get(state.activeTabId) : null;
-        if (tab) {
-            autoReplyCheck.checked = !!tab.autoReply;
-            autoReplyText.value = tab.autoReplyText || 'Continue';
-        }
+        autoReplyCheck.checked = !!state.autoReply;
+        autoReplyText.value = state.autoReplyText || 'Continue';
     }
 
     function loadState() {
@@ -506,48 +451,18 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
 
     // ── Renderers (pure DOM from state) ─────────────────
 
-    function renderTabBar() {
-        tabBar.querySelectorAll('.tab').forEach(function (el) { el.remove(); });
-        state.tabs.forEach(function (tab, id) {
-            var el = document.createElement('div');
-            var isEndedOrIdle = tab.state === 'ended' || tab.state === 'idle';
-            el.className = 'tab' + (id === state.activeTabId ? ' active' : '') +
-                (tab.state === 'ended' ? ' ended' : '') +
-                (isEndedOrIdle ? ' tab-ended' : '');
-
-            var dot = document.createElement('span');
-            dot.className = 'dot ' + tab.state;
-            el.appendChild(dot);
-
-            var lbl = document.createElement('span');
-            lbl.textContent = tab.label;
-            el.appendChild(lbl);
-
-            var close = document.createElement('span');
-            close.className = 'close-btn';
-            close.textContent = '\u00D7';
-            close.onclick = function (e) { e.stopPropagation(); exec(state.closeTab(id)); };
-            el.appendChild(close);
-
-            el.onclick = function () { exec(state.switchTab(id, inputEl.value)); };
-            tabBar.insertBefore(el, tabOverflow);
-        });
-    }
-
     function renderMessages() {
         messagesEl.innerHTML = '';
-        var tab = state.activeTabId ? state.tabs.get(state.activeTabId) : null;
-        if (!tab || tab.messages.length === 0) {
+        if (state.messages.length === 0) {
             emptyState.style.display = 'flex';
             messagesEl.appendChild(emptyState);
-            var muted = tab && (tab.state === 'ended' || tab.state === 'idle');
-            messagesEl.classList.toggle('messages-muted', !!muted);
+            messagesEl.classList.remove('messages-muted');
             return;
         }
         emptyState.style.display = 'none';
 
-        for (var i = 0; i < tab.messages.length; i++) {
-            var msg = tab.messages[i];
+        for (var i = 0; i < state.messages.length; i++) {
+            var msg = state.messages[i];
             var row = document.createElement('div');
             row.className = 'msg-row ' + msg.role;
             var el = document.createElement('div');
@@ -587,15 +502,13 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
             row.appendChild(el);
             messagesEl.appendChild(row);
         }
-        var muted2 = tab && (tab.state === 'ended' || tab.state === 'idle');
-        messagesEl.classList.toggle('messages-muted', !!muted2);
+        messagesEl.classList.remove('messages-muted');
         messagesEl.scrollTop = messagesEl.scrollHeight;
     }
 
     function renderPending() {
-        var tab = state.activeTabId ? state.tabs.get(state.activeTabId) : null;
-        var q = tab ? tab.pendingQueue : [];
-        var imgs = tab ? (tab.pendingImages || []) : [];
+        var q = state.pendingQueue;
+        var imgs = state.pendingImages || [];
         if (q.length === 0 && imgs.length === 0) {
             pendingSection.classList.remove('visible');
             return;
@@ -655,16 +568,14 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
         var ui = state.getUIState();
         var staged = state.getStagedImages();
         var hasContent = inputEl.value.trim().length > 0 || staged.length > 0;
-        var isEndedOrIdle = ui.isEnded || ui.isIdle;
-        document.body.classList.toggle('input-hidden', isEndedOrIdle);
-        if (ui.isEnded) {
-            sendBtn.disabled = true; sendBtn.textContent = 'Ended'; sendBtn.className = 'send-btn';
-        } else if (ui.buttonMode === 'send') {
+        if (ui.buttonMode === 'send') {
             sendBtn.disabled = !hasContent;
             sendBtn.textContent = ui.feedbackQueueSize > 1 ? 'Send (' + ui.feedbackQueueSize + ')' : 'Send';
             sendBtn.className = 'send-btn';
         } else {
-            sendBtn.disabled = !hasContent; sendBtn.textContent = 'Queue'; sendBtn.className = 'send-btn queue-mode';
+            sendBtn.disabled = !hasContent;
+            sendBtn.textContent = 'Queue';
+            sendBtn.className = 'send-btn queue-mode';
         }
     }
 
@@ -916,7 +827,6 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
             ws.onopen = function () {
                 reconnectAttempts = 0;
                 ws.send(JSON.stringify({ type: 'register', clientType: 'webview', projectPath: PROJECT_PATH }));
-                ws.send(JSON.stringify({ type: 'get_conversations' }));
             };
             ws.onmessage = function (e) {
                 try {
@@ -962,7 +872,6 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
     // ── Init ────────────────────────────────────────────
 
     loadState();
-    renderTabBar();
     renderMessages();
     renderPending();
     renderStagedImages();

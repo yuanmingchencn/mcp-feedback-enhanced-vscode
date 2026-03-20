@@ -7,7 +7,7 @@
  * Allowlisted tools (interactive_feedback, read-only) are never blocked.
  */
 
-const { log, output, readStdin, httpGet, getServerPort, findServer } = require('./hook-utils');
+const { log, output, readStdin, httpGet, findServer } = require('./hook-utils');
 
 const ALLOWLIST_TOOLS = ['interactive_feedback', 'get_system_info', 'mcp-feedback-enhanced'];
 const PASSTHROUGH_TOOLS = ['task', 'switchmode', 'read', 'grep', 'glob', 'semanticsearch', 'readlints', 'todowrite', 'askquestion'];
@@ -35,17 +35,9 @@ async function main() {
     if (!input) { output({}); return; }
 
     var toolName = input.tool_name || '';
-    var conversationId = input.conversation_id || '';
-    var serverPid = process.env.MCP_FEEDBACK_SERVER_PID || '';
     var workspaceRoots = input.workspace_roots || [];
 
-    log('preToolUse: tool=' + toolName + ' conv=' + conversationId + ' pid=' + serverPid);
-
-    if (!conversationId) {
-        log('  preToolUse: no conversation_id, passthrough');
-        output({});
-        return;
-    }
+    log('preToolUse: tool=' + toolName);
 
     if (isAllowlisted(toolName)) {
         log('  preToolUse: allowlisted tool=' + toolName);
@@ -53,22 +45,16 @@ async function main() {
         return;
     }
 
-    var port = serverPid ? getServerPort(serverPid) : null;
+    var server = findServer(workspaceRoots);
+    var port = server ? server.port : null;
     if (!port) {
-        var server = findServer(workspaceRoots);
-        port = server ? server.port : null;
-        if (port) {
-            log('  preToolUse: fallback findServer port=' + port);
-        }
-    }
-    if (!port) {
-        log('  preToolUse: no server port found');
+        log('  preToolUse: no server found');
         output({});
         return;
     }
 
     try {
-        var result = await httpGet(port, '/pending/' + encodeURIComponent(conversationId) + '?consume=1');
+        var result = await httpGet(port, '/pending?consume=1');
         if (result.status === 200 && result.data) {
             var comments = result.data.comments || [];
             var combined = comments.join('\n\n') || '(image pending)';

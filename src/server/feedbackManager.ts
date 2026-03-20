@@ -1,6 +1,7 @@
 /**
  * Manages the lifecycle of feedback requests.
  * Each request is a Promise that resolves when the user responds.
+ * Keyed by session_id only — no conversation_id.
  */
 
 import { WebSocket } from 'ws';
@@ -12,7 +13,6 @@ export interface FeedbackResult {
 
 interface PendingFeedback {
     sessionId: string;
-    conversationId: string;
     mcpClient: WebSocket;
     resolve: (result: FeedbackResult) => void;
     reject: (error: Error) => void;
@@ -24,13 +24,11 @@ export class FeedbackManager {
 
     createRequest(
         sessionId: string,
-        conversationId: string,
         mcpClient: WebSocket
     ): Promise<FeedbackResult> {
         return new Promise<FeedbackResult>((resolve, reject) => {
             this.pending.set(sessionId, {
                 sessionId,
-                conversationId,
                 mcpClient,
                 resolve,
                 reject,
@@ -47,45 +45,27 @@ export class FeedbackManager {
         return true;
     }
 
-    resolveByConversation(conversationId: string, result: FeedbackResult): void {
+    rejectByClient(ws: WebSocket): void {
         for (const [sid, req] of this.pending) {
-            if (req.conversationId === conversationId) {
-                req.resolve(result);
+            if (req.mcpClient === ws) {
+                req.reject(new Error('MCP client disconnected'));
                 this.pending.delete(sid);
             }
         }
-    }
-
-    getConversationId(sessionId: string): string | undefined {
-        return this.pending.get(sessionId)?.conversationId;
-    }
-
-    getMcpClient(sessionId: string): WebSocket | undefined {
-        return this.pending.get(sessionId)?.mcpClient;
-    }
-
-    getSessionsForConversation(conversationId: string): string[] {
-        const sessions: string[] = [];
-        for (const [sid, req] of this.pending) {
-            if (req.conversationId === conversationId) {
-                sessions.push(sid);
-            }
-        }
-        return sessions;
     }
 
     hasPending(): boolean {
         return this.pending.size > 0;
     }
 
+    pendingSessionIds(): string[] {
+        return Array.from(this.pending.keys());
+    }
+
     rejectAll(error: Error): void {
         for (const [, req] of this.pending) {
             req.reject(error);
         }
-        this.pending.clear();
-    }
-
-    clear(): void {
         this.pending.clear();
     }
 }

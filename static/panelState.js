@@ -7,13 +7,14 @@
  *     messages, call render functions, mutate DOM, or notify VS Code.
  *   - No DOM, no WebSocket, no side-effects. 100 % testable in Node.
  *
- * State machine per tab:
+ * Flat model: one message timeline, one pending queue, one session queue (FIFO).
+ *
+ * State machine (panel level):
  *   idle -> waiting        (session_updated)
- *   waiting -> running     (feedback submitted)
- *   waiting -> ended       (session_ended)
+ *   waiting -> running     (feedback submitted, queue empty)
+ *   waiting -> waiting     (feedback submitted, queue still has items)
  *   running -> waiting     (session_updated)
- *   running -> ended       (session_ended)
- *   ended is terminal — all incoming events for ended tabs are dropped.
+ *   running -> idle        (no more sessions)
  */
 
 (function (exports) {
@@ -37,137 +38,31 @@
         return { type: 'notify', message };
     }
 
-    // ── TabState ────────────────────────────────────────────
+    // ── PanelState ──────────────────────────────────────────
 
-    const VALID_STATES = ['idle', 'waiting', 'running', 'ended'];
-
-    class TabState {
-        constructor(id, label, model, state) {
-            this.conversationId = id;
-            this.label = label || 'Agent';
-            this.model = model || '';
-            this.state = VALID_STATES.includes(state) ? state : 'idle';
+    class PanelState {
+        constructor() {
             this.messages = [];
+            this.sessionQueue = [];
             this.pendingQueue = [];
             this.pendingImages = [];
-            this.sessionQueue = [];
             this.autoReply = false;
             this.autoReplyText = 'Continue';
             this.inputDraft = '';
             this.stagedImages = [];
         }
 
-        get isTerminal() {
-            return this.state === 'ended';
-        }
-
-        get isWaiting() {
-            return this.state === 'waiting' && this.sessionQueue.length > 0;
+        get panelMode() {
+            if (this.sessionQueue.length > 0) return 'waiting';
+            if (this.messages.length > 0) {
+                var last = this.messages[this.messages.length - 1];
+                if (last.role === 'user' && !last.pending_delivered) return 'running';
+            }
+            return 'idle';
         }
 
         get pendingSessionId() {
             return this.sessionQueue.length > 0 ? this.sessionQueue[0].sessionId : null;
-        }
-
-        get isRunning() {
-            return this.state === 'running';
-        }
-
-        get isIdle() {
-            return this.state === 'idle';
-        }
-
-        transitionTo(newState) {
-            if (this.isTerminal) return false;
-            if (!VALID_STATES.includes(newState)) return false;
-            this.state = newState;
-            return true;
-        }
-
-        addMessage(role, content, extra) {
-            const msg = {
-                role,
-                content: content || '',
-                timestamp: new Date().toISOString(),
-            };
-            if (extra) Object.assign(msg, extra);
-            this.messages.push(msg);
-            return msg;
-        }
-
-        clearPendingQueue() {
-            this.pendingQueue = [];
-            this.pendingImages = [];
-        }
-    }
-
-    // ── PanelState ──────────────────────────────────────────
-
-    class PanelState {
-        constructor() {
-            this.tabs = new Map();
-            this.activeTabId = null;
-        }
-
-        // ── Tab management ──────────────────────────────────
-
-        getOrCreateTab(id, label, model, state) {
-            if (this.tabs.has(id)) {
-                const existing = this.tabs.get(id);
-                if (label) existing.label = label;
-                if (model) existing.model = model;
-                if (state && !existing.isTerminal) existing.state = state;
-                return existing;
-            }
-            const tab = new TabState(id, label, model, state);
-            this.tabs.set(id, tab);
-            return tab;
-        }
-
-        _activeTab() {
-            return this.activeTabId ? this.tabs.get(this.activeTabId) : null;
-        }
-
-        switchTab(id, currentInputValue) {
-            if (!this.tabs.has(id)) return [];
-            const cmds = [];
-
-            if (this.activeTabId && this.activeTabId !== id) {
-                const prev = this.tabs.get(this.activeTabId);
-                if (prev) {
-                    prev.inputDraft = currentInputValue || '';
-                }
-            }
-
-            this.activeTabId = id;
-            const tab = this.tabs.get(id);
-
-            cmds.push(render('tabs', 'messages', 'pending', 'input', 'images'));
-            cmds.push(dom('set_input', tab.inputDraft || ''));
-            cmds.push(dom('set_staged_images', tab.stagedImages || []));
-            cmds.push(dom('sync_settings'));
-            cmds.push(dom('save_state'));
-            return cmds;
-        }
-
-        closeTab(id) {
-            const cmds = [];
-            this.tabs.delete(id);
-
-            if (this.activeTabId === id) {
-                const keys = Array.from(this.tabs.keys());
-                this.activeTabId = keys.length > 0 ? keys[keys.length - 1] : null;
-                const newTab = this._activeTab();
-                if (newTab) {
-                    cmds.push(dom('set_input', newTab.inputDraft || ''));
-                    cmds.push(render('images'));
-                }
-            }
-
-            cmds.push(wsSend({ type: 'close_tab', conversation_id: id }));
-            cmds.push(render('tabs', 'messages', 'pending', 'input'));
-            cmds.push(dom('save_state'));
-            return cmds;
         }
 
         // ── Message handling (WS -> State -> Commands) ──────
@@ -176,13 +71,10 @@
             if (!msg || typeof msg !== 'object' || !msg.type) return [];
             switch (msg.type) {
                 case 'connection_established':
-                    return [];
+                    return [wsSend({ type: 'get_state' })];
 
-                case 'session_registered':
-                    return this._onSessionRegistered(msg);
-
-                case 'session_ended':
-                    return this._onSessionEnded(msg);
+                case 'state_sync':
+                    return this._onStateSync(msg);
 
                 case 'session_updated':
                     return this._onSessionUpdated(msg);
@@ -193,20 +85,8 @@
                 case 'pending_delivered':
                     return this._onPendingDelivered(msg);
 
-                case 'pending-consumed':
-                    return this._onPendingConsumed(msg);
-
                 case 'pending_synced':
                     return this._onPendingSynced(msg);
-
-                case 'conversations_list':
-                    return this._onConversationsList(msg);
-
-                case 'conversation_loaded':
-                    return this._onConversationLoaded(msg);
-
-                case 'tab_closed':
-                    return this._onTabClosed(msg);
 
                 case 'pong':
                 case 'status_update':
@@ -217,71 +97,48 @@
             }
         }
 
-        _onSessionRegistered(msg) {
-            const s = msg.session || {};
-            const conv = msg.conversation || {};
-            const id = s.conversation_id || conv.conversation_id;
-            if (!id) return [];
+        _onStateSync(msg) {
+            this.messages = msg.messages || [];
+            this.pendingQueue = msg.pending_comments || [];
+            this.pendingImages = msg.pending_images || [];
 
-            const tab = this.getOrCreateTab(id, conv.label, conv.model || s.model, conv.state || 'idle');
-            if (conv.messages) tab.messages = conv.messages;
-
-            const cmds = [render('tabs')];
-            if (!this.activeTabId) {
-                this.activeTabId = id;
-                cmds.push(render('messages', 'pending', 'input'));
+            var pendingSessions = msg.pending_sessions || [];
+            for (var i = 0; i < pendingSessions.length; i++) {
+                var sid = pendingSessions[i];
+                if (!this.sessionQueue.some(function (s) { return s.sessionId === sid; })) {
+                    this.sessionQueue.push({ sessionId: sid, summary: '' });
+                }
             }
-            return cmds;
-        }
 
-        _onSessionEnded(msg) {
-            const tab = this.tabs.get(msg.conversation_id);
-            if (!tab) return [];
-
-            tab.transitionTo('ended');
-            tab.clearPendingQueue();
-            tab.sessionQueue = [];
-            tab.addMessage('system', '\u2500\u2500 Session ended \u2500\u2500');
-
-            const cmds = [render('tabs'), dom('save_state')];
-            if (msg.conversation_id === this.activeTabId) {
-                cmds.push(render('messages', 'pending', 'input'));
-            }
-            return cmds;
+            return [
+                render('messages', 'pending', 'input'),
+                dom('save_state'),
+            ];
         }
 
         _onSessionUpdated(msg) {
-            const info = msg.session_info;
-            if (!info || !info.conversation_id) return [];
+            var info = msg.session_info;
+            if (!info || !info.session_id) return [];
 
-            const id = info.conversation_id;
-            const existing = this.tabs.get(id);
-            if (existing && existing.isTerminal) return [];
-
-            const tab = this.getOrCreateTab(id, info.label || null, null, 'waiting');
-            tab.state = 'waiting';
-            const alreadyQueued = tab.sessionQueue.some(function (s) { return s.sessionId === info.session_id; });
+            var alreadyQueued = this.sessionQueue.some(function (s) { return s.sessionId === info.session_id; });
             if (!alreadyQueued) {
-                tab.sessionQueue.push({ sessionId: info.session_id, summary: info.summary || '' });
+                this.sessionQueue.push({ sessionId: info.session_id, summary: info.summary || '' });
             }
-            tab.addMessage('ai', info.summary || '');
 
-            this.activeTabId = id;
-            const cmds = [
-                render('tabs', 'messages', 'pending', 'input'),
+            var cmds = [
+                render('messages', 'pending', 'input'),
                 notify({ type: 'new-session' }),
             ];
 
-            // Auto-submit queued pending
-            if (tab.pendingQueue.length > 0 || tab.pendingImages.length > 0) {
-                const combined = tab.pendingQueue.join('\n\n');
-                const images = tab.pendingImages.length > 0 ? [...tab.pendingImages] : [];
-                tab.clearPendingQueue();
+            if (this.pendingQueue.length > 0 || this.pendingImages.length > 0) {
+                var combined = this.pendingQueue.join('\n\n');
+                var images = this.pendingImages.length > 0 ? [].concat(this.pendingImages) : [];
+                this.pendingQueue = [];
+                this.pendingImages = [];
 
                 cmds.push(render('pending'));
                 cmds.push(wsSend({
                     type: 'queue-pending',
-                    conversation_id: id,
                     comments: [],
                     images: [],
                 }));
@@ -290,17 +147,16 @@
                     commands: cmds,
                     autoSubmit: {
                         text: combined || '(image)',
-                        images,
+                        images: images,
                     },
                 };
             }
 
-            // Auto-reply if enabled
-            if (tab.autoReply && tab.autoReplyText) {
+            if (this.autoReply && this.autoReplyText) {
                 return {
                     commands: cmds,
                     autoReply: {
-                        text: tab.autoReplyText,
+                        text: this.autoReplyText,
                         sessionId: info.session_id,
                         delay: 500,
                     },
@@ -311,176 +167,104 @@
         }
 
         _onFeedbackSubmitted(msg) {
-            const tab = this.tabs.get(msg.conversation_id);
-            if (!tab) return [];
-
-            const last = tab.messages[tab.messages.length - 1];
-            const alreadyHas = last && last.role === 'user' && last.content === msg.feedback;
-            if (msg.feedback && !alreadyHas) {
-                tab.addMessage('user', msg.feedback);
+            if (msg.feedback) {
+                var last = this.messages[this.messages.length - 1];
+                var alreadyHas = last && last.role === 'user' && last.content === msg.feedback;
+                if (!alreadyHas) {
+                    this.messages.push({
+                        role: 'user',
+                        content: msg.feedback,
+                        timestamp: new Date().toISOString(),
+                    });
+                }
             }
+
             if (msg.session_id) {
-                tab.sessionQueue = tab.sessionQueue.filter(function (s) { return s.sessionId !== msg.session_id; });
+                this.sessionQueue = this.sessionQueue.filter(function (s) { return s.sessionId !== msg.session_id; });
             } else {
-                tab.sessionQueue.shift();
-            }
-            if (tab.sessionQueue.length === 0) {
-                tab.transitionTo('running');
+                this.sessionQueue.shift();
             }
 
-            const cmds = [render('tabs'), dom('save_state')];
-            if (msg.conversation_id === this.activeTabId) {
-                cmds.push(render('messages', 'input'));
-            }
-            return cmds;
+            return [
+                render('messages', 'input'),
+                dom('save_state'),
+            ];
         }
 
         _onPendingDelivered(msg) {
-            const tab = this.tabs.get(msg.conversation_id);
-            if (!tab) return [];
+            var comments = msg.comments || [];
+            var images = msg.images || [];
 
-            const comments = msg.comments || [];
-            const images = msg.images || [];
-
-            for (let i = 0; i < comments.length; i++) {
-                const extra = { pending_delivered: true };
+            for (var i = 0; i < comments.length; i++) {
+                var extra = { pending_delivered: true };
                 if (i === comments.length - 1 && images.length > 0) {
                     extra.images = images;
                 }
-                tab.addMessage('user', comments[i], extra);
+                this.messages.push({
+                    role: 'user',
+                    content: comments[i],
+                    timestamp: new Date().toISOString(),
+                    pending_delivered: true,
+                    images: (i === comments.length - 1 && images.length > 0) ? images : undefined,
+                });
             }
             if (comments.length === 0 && images.length > 0) {
-                tab.addMessage('user', '', { pending_delivered: true, images });
+                this.messages.push({
+                    role: 'user',
+                    content: '',
+                    timestamp: new Date().toISOString(),
+                    pending_delivered: true,
+                    images: images,
+                });
             }
 
-            tab.clearPendingQueue();
+            this.pendingQueue = [];
+            this.pendingImages = [];
 
-            const cmds = [dom('save_state')];
-            if (msg.conversation_id === this.activeTabId) {
-                cmds.push(render('messages', 'pending'));
-            }
-            return cmds;
-        }
-
-        _onPendingConsumed(msg) {
-            const tab = this.tabs.get(msg.conversation_id);
-            if (!tab || tab.pendingQueue.length === 0) return [];
-
-            tab.addMessage('system', '\u26A1 Pending delivered');
-            tab.clearPendingQueue();
-
-            const cmds = [dom('save_state')];
-            if (msg.conversation_id === this.activeTabId) {
-                cmds.push(render('messages', 'pending'));
-            }
-            return cmds;
+            return [
+                render('messages', 'pending'),
+                dom('save_state'),
+            ];
         }
 
         _onPendingSynced(msg) {
-            const tab = this.tabs.get(msg.conversation_id);
-            if (!tab) return [];
+            this.pendingQueue = msg.comments || [];
+            if (msg.images !== undefined) this.pendingImages = msg.images;
 
-            tab.pendingQueue = msg.comments || [];
-            if (msg.images !== undefined) tab.pendingImages = msg.images;
-
-            const cmds = [dom('save_state')];
-            if (msg.conversation_id === this.activeTabId) {
-                cmds.push(render('pending'));
-            }
-            return cmds;
-        }
-
-        _onConversationsList(msg) {
-            for (const c of msg.conversations || []) {
-                const tab = this.getOrCreateTab(c.conversation_id, c.label, c.model, c.state);
-                var sessions = c.pending_sessions || (c.active_session_id ? [c.active_session_id] : []);
-                for (var si = 0; si < sessions.length; si++) {
-                    var sid = sessions[si];
-                    if (!tab.sessionQueue.some(function (s) { return s.sessionId === sid; })) {
-                        tab.sessionQueue.push({ sessionId: sid, summary: '' });
-                    }
-                }
-            }
-
-            const cmds = [render('tabs')];
-            if (!this.activeTabId && this.tabs.size > 0) {
-                this.activeTabId = Array.from(this.tabs.keys())[this.tabs.size - 1];
-            }
-            if (this.activeTabId) {
-                cmds.push(wsSend({
-                    type: 'load_conversation',
-                    conversation_id: this.activeTabId,
-                }));
-            }
-            return cmds;
-        }
-
-        _onConversationLoaded(msg) {
-            const conv = msg.conversation;
-            if (!conv) return [];
-
-            const tab = this.getOrCreateTab(conv.conversation_id, conv.label, conv.model, conv.state);
-            tab.messages = conv.messages || [];
-            tab.pendingQueue = conv.pending_queue || [];
-
-            const cmds = [dom('save_state')];
-            if (conv.conversation_id === this.activeTabId) {
-                cmds.push(render('messages', 'pending'));
-            }
-            return cmds;
-        }
-
-        _onTabClosed(msg) {
-            const cid = msg.conversation_id;
-            if (!cid || !this.tabs.has(cid)) return [];
-
-            const cmds = [];
-            this.tabs.delete(cid);
-            if (this.activeTabId === cid) {
-                const keys = Array.from(this.tabs.keys());
-                this.activeTabId = keys.length > 0 ? keys[keys.length - 1] : null;
-                const newTab = this._activeTab();
-                if (newTab) {
-                    cmds.push(dom('set_input', newTab.inputDraft || ''));
-                    cmds.push(render('images'));
-                }
-            }
-            cmds.push(render('tabs', 'messages', 'pending', 'input'));
-            cmds.push(dom('save_state'));
-            return cmds;
+            return [
+                render('pending'),
+                dom('save_state'),
+            ];
         }
 
         // ── User actions ────────────────────────────────────
 
         smartSend(text, images) {
-            const tab = this._activeTab();
-            if (!tab) return [];
-            if (tab.isWaiting) return this.submitFeedback(text, images);
+            if (this.panelMode === 'waiting') return this.submitFeedback(text, images);
             return this.addToPending(text, images);
         }
 
         submitFeedback(text, images) {
-            const tab = this._activeTab();
-            if (!tab || tab.sessionQueue.length === 0) return [];
+            if (this.sessionQueue.length === 0) return [];
 
-            const entry = tab.sessionQueue.shift();
-            const msgImages = images && images.length > 0 ? images : undefined;
-            tab.addMessage('user', text, { images: msgImages });
-            tab.stagedImages = [];
-
-            if (tab.sessionQueue.length === 0) {
-                tab.transitionTo('running');
-            }
+            var entry = this.sessionQueue.shift();
+            var msgImages = images && images.length > 0 ? images : undefined;
+            this.messages.push({
+                role: 'user',
+                content: text || '',
+                timestamp: new Date().toISOString(),
+                images: msgImages,
+            });
+            this.stagedImages = [];
 
             return [
                 wsSend({
                     type: 'feedback_response',
                     session_id: entry.sessionId,
-                    conversation_id: tab.conversationId,
-                    feedback: text,
+                    feedback: text || '',
                     images: images || [],
                 }),
-                render('tabs', 'messages', 'input'),
+                render('messages', 'input'),
                 dom('clear_input'),
                 dom('clear_staged_images'),
                 dom('save_state'),
@@ -489,23 +273,19 @@
         }
 
         addToPending(text, images) {
-            const hasText = text && text.trim();
-            const hasImages = images && images.length > 0;
+            var hasText = text && text.trim();
+            var hasImages = images && images.length > 0;
             if (!hasText && !hasImages) return [];
 
-            const tab = this._activeTab();
-            if (!tab || tab.isTerminal) return [];
-
-            if (hasText) tab.pendingQueue.push(text.trim());
-            if (hasImages) tab.pendingImages = [...(tab.pendingImages || []), ...images];
-            tab.stagedImages = [];
+            if (hasText) this.pendingQueue.push(text.trim());
+            if (hasImages) this.pendingImages = [].concat(this.pendingImages || [], images);
+            this.stagedImages = [];
 
             return [
                 wsSend({
                     type: 'queue-pending',
-                    conversation_id: tab.conversationId,
-                    comments: tab.pendingQueue,
-                    images: tab.pendingImages || [],
+                    comments: this.pendingQueue,
+                    images: this.pendingImages || [],
                 }),
                 render('pending'),
                 dom('clear_input'),
@@ -515,18 +295,16 @@
         }
 
         editPending(idx) {
-            const tab = this._activeTab();
-            if (!tab || idx < 0 || idx >= tab.pendingQueue.length) return [];
+            if (idx < 0 || idx >= this.pendingQueue.length) return [];
 
-            const text = tab.pendingQueue[idx];
-            tab.pendingQueue.splice(idx, 1);
+            var text = this.pendingQueue[idx];
+            this.pendingQueue.splice(idx, 1);
 
             return [
                 wsSend({
                     type: 'queue-pending',
-                    conversation_id: tab.conversationId,
-                    comments: tab.pendingQueue,
-                    images: tab.pendingImages || [],
+                    comments: this.pendingQueue,
+                    images: this.pendingImages || [],
                 }),
                 render('pending'),
                 dom('set_input', text),
@@ -536,17 +314,15 @@
         }
 
         removePending(idx) {
-            const tab = this._activeTab();
-            if (!tab || idx < 0 || idx >= tab.pendingQueue.length) return [];
+            if (idx < 0 || idx >= this.pendingQueue.length) return [];
 
-            tab.pendingQueue.splice(idx, 1);
+            this.pendingQueue.splice(idx, 1);
 
             return [
                 wsSend({
                     type: 'queue-pending',
-                    conversation_id: tab.conversationId,
-                    comments: tab.pendingQueue,
-                    images: tab.pendingImages || [],
+                    comments: this.pendingQueue,
+                    images: this.pendingImages || [],
                 }),
                 render('pending'),
                 dom('save_state'),
@@ -554,15 +330,12 @@
         }
 
         clearPending() {
-            const tab = this._activeTab();
-            if (!tab) return [];
-
-            tab.clearPendingQueue();
+            this.pendingQueue = [];
+            this.pendingImages = [];
 
             return [
                 wsSend({
                     type: 'queue-pending',
-                    conversation_id: tab.conversationId,
                     comments: [],
                     images: [],
                 }),
@@ -572,16 +345,14 @@
         }
 
         clearPendingImages() {
-            const tab = this._activeTab();
-            if (!tab || tab.pendingImages.length === 0) return [];
+            if (this.pendingImages.length === 0) return [];
 
-            tab.pendingImages = [];
+            this.pendingImages = [];
 
             return [
                 wsSend({
                     type: 'queue-pending',
-                    conversation_id: tab.conversationId,
-                    comments: tab.pendingQueue,
+                    comments: this.pendingQueue,
                     images: [],
                 }),
                 render('pending'),
@@ -589,57 +360,47 @@
             ];
         }
 
-        // ── Staged images (per-tab, in the input area) ─────
+        // ── Staged images (in the input area) ───────────────
 
         stageImage(base64) {
-            const tab = this._activeTab();
-            if (!tab) return [];
-            tab.stagedImages.push(base64);
+            this.stagedImages.push(base64);
             return [render('staged_images'), dom('update_send_button')];
         }
 
         unstageImage(idx) {
-            const tab = this._activeTab();
-            if (!tab || idx < 0 || idx >= tab.stagedImages.length) return [];
-            tab.stagedImages.splice(idx, 1);
+            if (idx < 0 || idx >= this.stagedImages.length) return [];
+            this.stagedImages.splice(idx, 1);
             return [render('staged_images'), dom('update_send_button')];
         }
 
         clearStagedImages() {
-            const tab = this._activeTab();
-            if (!tab) return [];
-            tab.stagedImages = [];
+            this.stagedImages = [];
             return [render('staged_images')];
         }
 
         getStagedImages() {
-            const tab = this._activeTab();
-            return tab ? tab.stagedImages : [];
+            return this.stagedImages;
         }
 
         // ── Auto-reply ──────────────────────────────────────
 
         setAutoReply(enabled, text) {
-            const tab = this._activeTab();
-            if (!tab) return [];
-            tab.autoReply = !!enabled;
-            if (text !== undefined) tab.autoReplyText = text;
+            this.autoReply = !!enabled;
+            if (text !== undefined) this.autoReplyText = text;
             return [dom('save_state')];
         }
 
         // ── UI state queries ────────────────────────────────
 
         getUIState() {
-            const tab = this._activeTab();
-            const state = tab ? tab.state : 'idle';
-            const queueLen = tab ? tab.sessionQueue.length : 0;
+            var mode = this.panelMode;
             return {
-                inputVisible: state === 'waiting' || state === 'running',
-                buttonMode: state === 'waiting' ? 'send' : 'queue',
-                isEnded: state === 'ended',
-                isIdle: state === 'idle' || !tab,
-                tabCount: this.tabs.size,
-                feedbackQueueSize: queueLen,
+                inputVisible: true,
+                buttonMode: mode === 'waiting' ? 'send' : 'queue',
+                isIdle: mode === 'idle',
+                isWaiting: mode === 'waiting',
+                isRunning: mode === 'running',
+                feedbackQueueSize: this.sessionQueue.length,
             };
         }
 
@@ -647,44 +408,27 @@
 
         serialize() {
             return {
-                activeTabId: this.activeTabId,
-                tabs: Array.from(this.tabs.entries()).map(function (entry) {
-                    var id = entry[0], t = entry[1];
-                    return {
-                        id: id,
-                        label: t.label,
-                        model: t.model,
-                        state: t.state,
-                        messages: t.messages.slice(-100),
-                        pendingQueue: t.pendingQueue,
-                        pendingImages: t.pendingImages,
-                        sessionQueue: t.sessionQueue,
-                        autoReply: t.autoReply,
-                        autoReplyText: t.autoReplyText,
-                        inputDraft: t.inputDraft || '',
-                        stagedImages: t.stagedImages || [],
-                    };
-                }),
+                messages: this.messages.slice(-500),
+                sessionQueue: this.sessionQueue,
+                pendingQueue: this.pendingQueue,
+                pendingImages: this.pendingImages,
+                autoReply: this.autoReply,
+                autoReplyText: this.autoReplyText,
+                inputDraft: this.inputDraft || '',
+                stagedImages: this.stagedImages || [],
             };
         }
 
         deserialize(data) {
             if (!data) return;
-            for (const t of data.tabs || []) {
-                const tab = new TabState(t.id, t.label, t.model, t.state);
-                tab.messages = t.messages || [];
-                tab.pendingQueue = t.pendingQueue || [];
-                tab.pendingImages = t.pendingImages || [];
-                tab.sessionQueue = t.sessionQueue || [];
-                tab.autoReply = t.autoReply || false;
-                tab.autoReplyText = t.autoReplyText || 'Continue';
-                tab.inputDraft = t.inputDraft || '';
-                tab.stagedImages = t.stagedImages || [];
-                this.tabs.set(t.id, tab);
-            }
-            if (data.activeTabId && this.tabs.has(data.activeTabId)) {
-                this.activeTabId = data.activeTabId;
-            }
+            this.messages = data.messages || [];
+            this.sessionQueue = data.sessionQueue || [];
+            this.pendingQueue = data.pendingQueue || [];
+            this.pendingImages = data.pendingImages || [];
+            this.autoReply = data.autoReply || false;
+            this.autoReplyText = data.autoReplyText || 'Continue';
+            this.inputDraft = data.inputDraft || '';
+            this.stagedImages = data.stagedImages || [];
         }
 
         // ── Static utilities ────────────────────────────────
@@ -718,7 +462,6 @@
     PanelState.cmd = { wsSend, render, dom, notify };
 
     exports.PanelState = PanelState;
-    exports.TabState = TabState;
 })(
     typeof module !== 'undefined' ? module.exports : (window.PanelStateModule = window.PanelStateModule || {})
 );

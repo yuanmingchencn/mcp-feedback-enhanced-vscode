@@ -8,7 +8,6 @@ const os = require('os');
 const http = require('http');
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
-const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
 function log(msg) {
@@ -76,11 +75,10 @@ function httpGet(port, urlPath, timeout) {
     });
 }
 
-function getServerPort(serverPid) {
-    if (!serverPid) return null;
-    var serverFile = path.join(SERVERS_DIR, serverPid + '.json');
-    var server = readJSON(serverFile);
-    return server ? server.port : null;
+function projectHash(dir) {
+    var crypto = require('crypto');
+    var normalized = path.normalize(dir).replace(/\/+$/, '');
+    return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
 function findServer(workspaceRoots) {
@@ -89,58 +87,43 @@ function findServer(workspaceRoots) {
             log('  findServer: no servers dir');
             return null;
         }
-        var files = fs.readdirSync(SERVERS_DIR).filter(function (f) { return f.endsWith('.json'); });
-        var servers = [];
-
-        for (var i = 0; i < files.length; i++) {
-            var s = readJSON(path.join(SERVERS_DIR, files[i]));
-            if (!s || !s.pid || !s.port) continue;
-            try { process.kill(s.pid, 0); } catch (e) { continue; }
-            servers.push(s);
-        }
-
-        if (servers.length === 0) {
-            log('  findServer: no alive servers');
-            return null;
-        }
-        if (servers.length === 1) {
-            log('  findServer: single server pid=' + servers[0].pid + ' port=' + servers[0].port);
-            return servers[0];
-        }
 
         var roots = (workspaceRoots || []).map(function (r) { return r.replace(/\/+$/, ''); });
-        for (var j = 0; j < servers.length; j++) {
-            var sWs = (servers[j].workspaces || []).map(function (w) { return w.replace(/\/+$/, ''); });
-            if (roots.some(function (r) { return sWs.includes(r); })) {
-                log('  findServer: workspace match pid=' + servers[j].pid);
-                return servers[j];
+        for (var i = 0; i < roots.length; i++) {
+            var hash = projectHash(roots[i]);
+            var s = readJSON(path.join(SERVERS_DIR, hash + '.json'));
+            if (s && s.pid && s.port) {
+                try { process.kill(s.pid, 0); } catch (e) { continue; }
+                log('  findServer: hash match pid=' + s.pid + ' port=' + s.port);
+                return s;
             }
         }
 
-        var traceId = process.env.CURSOR_TRACE_ID || '';
-        if (traceId) {
-            for (var k = 0; k < servers.length; k++) {
-                if (servers[k].cursorTraceId === traceId) {
-                    log('  findServer: traceId match pid=' + servers[k].pid);
-                    return servers[k];
-                }
-            }
+        // Single server fallback
+        var files = fs.readdirSync(SERVERS_DIR).filter(function (f) { return f.endsWith('.json'); });
+        var alive = [];
+        for (var j = 0; j < files.length; j++) {
+            var sv = readJSON(path.join(SERVERS_DIR, files[j]));
+            if (!sv || !sv.pid || !sv.port) continue;
+            try { process.kill(sv.pid, 0); } catch (e) { continue; }
+            alive.push(sv);
+        }
+        if (alive.length === 1) {
+            log('  findServer: single server pid=' + alive[0].pid + ' port=' + alive[0].port);
+            return alive[0];
         }
 
-        log('  findServer: fallback to first pid=' + servers[0].pid);
-        return servers[0];
+        return null;
     } catch (e) { return null; }
 }
 
 module.exports = {
     CONFIG_DIR,
-    SESSIONS_DIR,
     SERVERS_DIR,
     log,
     output,
     readJSON,
     readStdin,
     httpGet,
-    getServerPort,
     findServer,
 };

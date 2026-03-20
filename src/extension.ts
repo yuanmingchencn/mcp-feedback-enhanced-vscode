@@ -24,10 +24,6 @@ function getWorkspaces(): string[] {
     return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
 }
 
-function getCursorTraceId(): string {
-    return process.env.CURSOR_TRACE_ID || '';
-}
-
 function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
     const candidates = [
         path.join(extensionPath, 'static', 'panel.html'),
@@ -51,7 +47,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     wsServer = new FeedbackWSServer();
     wsServer.setWorkspaces(getWorkspaces());
-    wsServer.setCursorTraceId(getCursorTraceId());
 
     let port: number;
     try {
@@ -74,7 +69,6 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     const forceResetCallback = async (): Promise<number> => {
         await wsServer.stop();
         wsServer.setWorkspaces(getWorkspaces());
-        wsServer.setCursorTraceId(getCursorTraceId());
         const newPort = await wsServer.start();
         port = newPort;
         bottomProvider.updateHtmlGetter(() => _loadWebviewHtml(context.extensionPath, newPort));

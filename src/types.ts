@@ -1,9 +1,9 @@
 /**
  * Shared type definitions for MCP Feedback Enhanced.
- * conversation_id is the single identifier for all per-conversation state.
+ * Flat per-window model — no conversation_id in the protocol.
  */
 
-export type ConversationState = 'idle' | 'running' | 'waiting' | 'ended' | 'archived';
+export type PanelMode = 'idle' | 'running' | 'waiting';
 
 export interface ConversationMessage {
     role: 'ai' | 'user' | 'system';
@@ -14,37 +14,18 @@ export interface ConversationMessage {
     pending_delivered?: boolean;
 }
 
-// Persisted in conversations/<conversation_id>.json
-export interface ConversationData {
-    conversation_id: string;
-    model: string;
-    workspace_roots: string[];
-    started_at: number;
-    ended_at: number | null;
-    label: string;
-    state: ConversationState;
+// Persisted in projects/<hash>.json
+export interface ProjectState {
+    projectPath: string;
     messages: ConversationMessage[];
-    pending_queue: string[];
-    server_pid: number | null;
-    is_background: boolean;
-    active_session_id: string | null;
+    lastActive: number;
 }
 
-// Persisted in sessions/<conversation_id>.json (written by hooks)
-export interface SessionRegistration {
-    conversation_id: string;
-    workspace_roots: string[];
-    model: string;
-    server_pid: number;
-    started_at: number;
-}
-
-// Persisted in servers/<pid>.json (written by extension)
+// Persisted in servers/<hash>.json (written by extension, keyed by project hash)
 export interface ServerInfo {
     port: number;
     pid: number;
-    workspaces: string[];
-    cursorTraceId: string;
+    projectPath: string;
     version: string;
     started_at: number;
 }
@@ -59,17 +40,15 @@ export interface WSMessage {
 export interface FeedbackRequest {
     type: 'feedback_request';
     session_id: string;
-    conversation_id: string;
-    project_directory?: string;
-    label?: string;
     summary: string;
+    label?: string;
+    project_directory?: string;
 }
 
 // Webview -> extension
 export interface FeedbackResponse {
     type: 'feedback_response';
     session_id: string;
-    conversation_id?: string;
     feedback: string;
     images?: string[];
 }
@@ -78,7 +57,6 @@ export interface SessionUpdate {
     type: 'session_updated';
     session_info: {
         session_id: string;
-        conversation_id: string;
         summary: string;
         model?: string;
         label?: string;

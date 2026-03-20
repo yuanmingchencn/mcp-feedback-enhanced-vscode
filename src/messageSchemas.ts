@@ -1,6 +1,6 @@
 /**
  * Zod schemas for all WebSocket messages in the MCP Feedback Enhanced system.
- * Used for runtime validation of incoming/outgoing messages.
+ * Flat model — no conversation_id in the protocol.
  */
 
 import { z } from 'zod';
@@ -16,7 +16,6 @@ export const RegisterSchema = z.object({
 export const FeedbackRequestSchema = z.object({
     type: z.literal('feedback_request'),
     session_id: z.string().min(1),
-    conversation_id: z.string().min(1),
     summary: z.string().min(1),
     label: z.string().optional(),
     project_directory: z.string().optional(),
@@ -27,31 +26,23 @@ export const FeedbackRequestSchema = z.object({
 export const FeedbackResponseSchema = z.object({
     type: z.literal('feedback_response'),
     session_id: z.string().min(1),
-    conversation_id: z.string().optional(),
     feedback: z.string(),
     images: z.array(z.string()).optional(),
 });
 
 export const QueuePendingSchema = z.object({
     type: z.literal('queue-pending'),
-    conversation_id: z.string().min(1),
     comments: z.array(z.string()),
     images: z.array(z.string()).optional(),
-});
-
-export const LoadConversationSchema = z.object({
-    type: z.literal('load_conversation'),
-    conversation_id: z.string().min(1),
-});
-
-export const CloseTabSchema = z.object({
-    type: z.literal('close_tab'),
-    conversation_id: z.string().min(1),
 });
 
 export const DismissFeedbackSchema = z.object({
     type: z.literal('dismiss_feedback'),
     session_id: z.string().min(1),
+});
+
+export const GetStateSchema = z.object({
+    type: z.literal('get_state'),
 });
 
 // ─── 3. Outgoing from Extension (to Webview) ───────────────────────────────
@@ -60,92 +51,42 @@ export const SessionUpdatedOutSchema = z.object({
     type: z.literal('session_updated'),
     session_info: z.object({
         session_id: z.string().min(1),
-        conversation_id: z.string().min(1),
         summary: z.string(),
         model: z.string().optional(),
-        label: z.string().min(1), // REQUIRED - never UUID
+        label: z.string().min(1),
     }),
 });
 
-export const SessionEndedOutSchema = z.object({
-    type: z.literal('session_ended'),
-    conversation_id: z.string().min(1),
-});
-
-export const ConversationsListOutSchema = z.object({
-    type: z.literal('conversations_list'),
-    conversations: z.array(
-        z.object({
-            conversation_id: z.string().min(1),
-            label: z.string(),
-            model: z.string(),
-            state: z.enum(['idle', 'running', 'waiting', 'ended', 'archived']),
-            active_session_id: z.string().nullable(),
-        })
-    ),
-});
-
-export const ConversationLoadedOutSchema = z.object({
-    type: z.literal('conversation_loaded'),
-    conversation: z.object({
-        conversation_id: z.string().min(1),
-        label: z.string(),
-        model: z.string(),
-        state: z.enum(['idle', 'running', 'waiting', 'ended', 'archived']),
-        messages: z.array(
-            z.object({
-                role: z.enum(['ai', 'user', 'system']),
-                content: z.string(),
-                timestamp: z.string(),
-                session_id: z.string().optional(),
-                images: z.array(z.string()).optional(),
-                pending_delivered: z.boolean().optional(),
-            })
-        ),
-        pending_queue: z.array(z.string()),
-    }),
+export const FeedbackSubmittedOutSchema = z.object({
+    type: z.literal('feedback_submitted'),
+    session_id: z.string().min(1),
+    feedback: z.string().optional(),
 });
 
 export const PendingDeliveredOutSchema = z.object({
     type: z.literal('pending_delivered'),
-    conversation_id: z.string().min(1),
     comments: z.array(z.string()),
     images: z.array(z.string()).optional(),
 });
 
 export const PendingSyncedOutSchema = z.object({
     type: z.literal('pending_synced'),
-    conversation_id: z.string().min(1),
     comments: z.array(z.string()),
     images: z.array(z.string()).optional(),
 });
 
-export const FeedbackSubmittedOutSchema = z.object({
-    type: z.literal('feedback_submitted'),
-    conversation_id: z.string().min(1),
-    feedback: z.string(),
-});
-
-export const SessionRegisteredOutSchema = z.object({
-    type: z.literal('session_registered'),
-    session: z.object({
-        conversation_id: z.string().min(1),
-        model: z.string().optional(),
-    }),
-    conversation: z
-        .object({
-            conversation_id: z.string().min(1),
-            label: z.string(),
-            model: z.string(),
-            state: z.enum(['idle', 'running', 'waiting', 'ended', 'archived']),
-            messages: z.array(z.any()).optional(),
-        })
-        .optional(),
-});
-
-export const TabClosedOutSchema = z.object({
-    type: z.literal('tab_closed'),
-    conversation_id: z.string().min(1),
+export const StateSyncOutSchema = z.object({
+    type: z.literal('state_sync'),
+    messages: z.array(z.object({
+        role: z.enum(['ai', 'user', 'system']),
+        content: z.string(),
+        timestamp: z.string(),
+        session_id: z.string().optional(),
+        images: z.array(z.string()).optional(),
+        pending_delivered: z.boolean().optional(),
+    })),
+    pending_comments: z.array(z.string()),
+    pending_images: z.array(z.string()),
 });
 
 // ─── 4. Simple messages ────────────────────────────────────────────────────
@@ -153,10 +94,6 @@ export const TabClosedOutSchema = z.object({
 export const PingSchema = z.object({ type: z.literal('ping') });
 export const PongSchema = z.object({ type: z.literal('pong') });
 export const HeartbeatSchema = z.object({ type: z.literal('heartbeat') });
-export const GetConversationsSchema = z.object({
-    type: z.literal('get_conversations'),
-});
-export const GetSessionsSchema = z.object({ type: z.literal('get_sessions') });
 
 // ─── 5. Hook schemas ───────────────────────────────────────────────────────
 
@@ -197,13 +134,10 @@ export const IncomingMessageSchema = z.discriminatedUnion('type', [
     FeedbackRequestSchema,
     FeedbackResponseSchema,
     QueuePendingSchema,
-    LoadConversationSchema,
-    CloseTabSchema,
     DismissFeedbackSchema,
+    GetStateSchema,
     PingSchema,
     HeartbeatSchema,
-    GetConversationsSchema,
-    GetSessionsSchema,
 ]);
 
 // ─── 7. Helper function for validation ──────────────────────────────────────
@@ -223,5 +157,3 @@ export function validateMessage<T extends z.ZodType>(
     }
     return result.data;
 }
-
-// generatePanelValidators removed — panel.html now uses PanelState.handleMessage() directly.

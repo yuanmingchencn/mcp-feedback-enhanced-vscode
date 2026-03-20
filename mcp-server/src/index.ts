@@ -3,10 +3,10 @@
  * MCP Feedback Enhanced Server.
  *
  * Tools:
- * - interactive_feedback: Request feedback from user, routed by conversation_id
+ * - interactive_feedback: Request feedback from user
  * - get_system_info: Return system information
  *
- * Routing: project_directory → workspace match (primary), then session file, then CURSOR_TRACE_ID, then single server
+ * Routing: project_directory → hash lookup in servers/<hash>.json, single server fallback.
  */
 
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -19,28 +19,19 @@ import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
 import * as net from 'net';
+import * as crypto from 'crypto';
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced');
-const SESSIONS_DIR = path.join(CONFIG_DIR, 'sessions');
 const SERVERS_DIR = path.join(CONFIG_DIR, 'servers');
 
 const FEEDBACK_REMINDER = '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
 
 // ─── File Helpers ─────────────────────────────────────────
 
-interface SessionData {
-    conversation_id: string;
-    workspace_roots: string[];
-    model: string;
-    server_pid: number;
-    started_at: number;
-}
-
 interface ServerData {
     port: number;
     pid: number;
-    workspaces: string[];
-    cursorTraceId: string;
+    projectPath: string;
     version: string;
 }
 
@@ -69,62 +60,27 @@ function isPortOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
     });
 }
 
-function workspaceMatches(workspaces: string[], projectDir: string): boolean {
-    const normalized = path.normalize(projectDir);
-    for (const w of workspaces) {
-        const wn = path.normalize(w);
-        if (wn === normalized) return true;
-        if (normalized.startsWith(wn + path.sep)) return true;
-    }
-    return false;
+function projectHash(dir: string): string {
+    const normalized = path.normalize(dir).replace(/\/+$/, '');
+    return crypto.createHash('sha256').update(normalized).digest('hex').slice(0, 16);
 }
 
 // ─── Extension Discovery ─────────────────────────────────
 
-async function findExtensionServer(conversationId?: string, projectDirectory?: string): Promise<ServerData | null> {
-    // Strategy 1: project_directory → workspace match (definitive, unique per Cursor window)
+async function findExtensionServer(projectDirectory?: string): Promise<ServerData | null> {
     if (projectDirectory) {
-        for (const f of listJSONFiles(SERVERS_DIR)) {
-            const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
-            if (server?.workspaces?.length && workspaceMatches(server.workspaces, projectDirectory) && await isPortOpen(server.port)) {
-                return server;
-            }
-        }
+        const hash = projectHash(projectDirectory);
+        const s = readJSON<ServerData>(path.join(SERVERS_DIR, `${hash}.json`));
+        if (s && await isPortOpen(s.port)) return s;
     }
 
-    // Strategy 2: conversation_id → session → server
-    if (conversationId) {
-        const session = readJSON<SessionData>(path.join(SESSIONS_DIR, `${conversationId}.json`));
-        if (session?.server_pid) {
-            const server = readJSON<ServerData>(path.join(SERVERS_DIR, `${session.server_pid}.json`));
-            if (server && await isPortOpen(server.port)) {
-                return server;
-            }
-        }
-    }
-
-    // Strategy 3: CURSOR_TRACE_ID → server (not unique per window on macOS)
-    const traceId = process.env.CURSOR_TRACE_ID || '';
-    if (traceId) {
-        for (const f of listJSONFiles(SERVERS_DIR)) {
-            const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
-            if (server?.cursorTraceId === traceId && await isPortOpen(server.port)) {
-                return server;
-            }
-        }
-    }
-
-    // Strategy 4: single server fallback (last resort)
-    const allServers: ServerData[] = [];
+    // Single server fallback
+    const alive: ServerData[] = [];
     for (const f of listJSONFiles(SERVERS_DIR)) {
-        const server = readJSON<ServerData>(path.join(SERVERS_DIR, f));
-        if (server && await isPortOpen(server.port)) {
-            allServers.push(server);
-        }
+        const s = readJSON<ServerData>(path.join(SERVERS_DIR, f));
+        if (s && await isPortOpen(s.port)) alive.push(s);
     }
-    if (allServers.length === 1) return allServers[0];
-
-    return null;
+    return alive.length === 1 ? alive[0] : null;
 }
 
 // ─── WebSocket Communication ──────────────────────────────
@@ -156,7 +112,6 @@ function connectToExtension(port: number): Promise<WebSocket> {
 function requestFeedback(
     ws: WebSocket,
     sessionId: string,
-    conversationId: string,
     summary: string,
     projectDirectory?: string,
     label?: string,
@@ -193,7 +148,6 @@ function requestFeedback(
         ws.send(JSON.stringify({
             type: 'feedback_request',
             session_id: sessionId,
-            conversation_id: conversationId,
             label: label || '',
             project_directory: projectDirectory,
             summary,
@@ -235,7 +189,6 @@ async function browserFallback(summary: string): Promise<string> {
             const url = `http://127.0.0.1:${addr.port}`;
             console.error(`[MCP Feedback] Browser fallback: ${url}`);
 
-            // Open browser
             const { exec } = require('child_process');
             const cmd = process.platform === 'darwin' ? 'open' :
                         process.platform === 'win32' ? 'start' : 'xdg-open';
@@ -288,15 +241,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: 'Request interactive feedback from the user. Call this tool to check in with the user, present your progress, and get their input before continuing.',
             inputSchema: {
                 type: 'object' as const,
-                required: ['summary', 'conversation_id'],
+                required: ['summary'],
                 properties: {
                     summary: {
                         type: 'string',
                         description: 'Summary of what you have done so far.',
-                    },
-                    conversation_id: {
-                        type: 'string',
-                        description: 'Your conversation ID, provided at session start. Use the EXACT value given to you. Do NOT fabricate or modify this value.',
                     },
                     project_directory: {
                         type: 'string',
@@ -304,7 +253,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                     },
                     agent_name: {
                         type: 'string',
-                        description: 'Display name for this conversation tab.',
+                        description: 'Display name for the conversation.',
                     },
                 },
             },
@@ -341,23 +290,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'interactive_feedback') {
         const parsed = z.object({
             summary: z.string(),
-            conversation_id: z.string(),
             agent_name: z.string().optional(),
             project_directory: z.string().optional(),
         }).parse(args);
 
-        const { summary, conversation_id, agent_name, project_directory } = parsed;
+        const { summary, agent_name, project_directory } = parsed;
         const sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         try {
-            // Find extension and connect
-            const extensionServer = await findExtensionServer(conversation_id, project_directory);
+            const extensionServer = await findExtensionServer(project_directory);
 
             if (extensionServer) {
                 const ws = await connectToExtension(extensionServer.port);
                 try {
                     const result = await requestFeedback(
-                        ws, sessionId, conversation_id || '', summary, project_directory, agent_name || ''
+                        ws, sessionId, summary, project_directory, agent_name || ''
                     );
                     const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
                         { type: 'text', text: result.feedback + FEEDBACK_REMINDER },
@@ -377,7 +324,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
             }
 
-            // Browser fallback
             console.error('[MCP Feedback] No extension found, using browser fallback');
             const feedback = await browserFallback(summary);
             return {
@@ -387,7 +333,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const errMsg = err instanceof Error ? err.message : String(err);
             console.error('[MCP Feedback] Error:', errMsg);
 
-            // Try browser fallback on error
             try {
                 const feedback = await browserFallback(summary);
                 return {

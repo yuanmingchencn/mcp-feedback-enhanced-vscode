@@ -1,8 +1,8 @@
 /**
  * WebSocket hub: the central message router.
  *
- * Accepts connections from webviews and MCP servers, routes messages
- * to the appropriate manager, and broadcasts state changes.
+ * Flat per-window model — no conversation_id routing.
+ * One project = one message timeline = one pending queue.
  */
 
 import * as http from 'http';
@@ -13,6 +13,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type {
     FeedbackRequest,
     FeedbackResponse,
+    ConversationMessage,
+    ProjectState,
     WSMessage,
 } from '../types';
 import {
@@ -21,23 +23,19 @@ import {
     FeedbackResponseSchema,
     QueuePendingSchema,
     RegisterSchema,
-    LoadConversationSchema,
     DismissFeedbackSchema,
-    CloseTabSchema,
+    GetStateSchema,
 } from '../messageSchemas';
 import {
     writeServer,
-    deleteServer,
-    readConversation,
+    deleteServerByHash,
+    readProject,
+    writeProject,
+    projectHash,
     cleanupStaleServers,
-    cleanupStaleSessions,
 } from '../fileStore';
-import { ConversationStore } from './conversationStore';
 import { FeedbackManager } from './feedbackManager';
 import { PendingManager } from './pendingManager';
-import { SessionWatcher } from './sessionWatcher';
-
-type ValidatedFeedbackRequest = FeedbackRequest & { session_id: string; conversation_id: string };
 
 const LOG_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'logs');
 function wsLog(msg: string): void {
@@ -60,7 +58,7 @@ const PORT_RANGE_START = 48200;
 const PORT_RANGE_END = 48300;
 const HEARTBEAT_INTERVAL = 30_000;
 const CLIENT_TIMEOUT = 90_000;
-const FEEDBACK_TIMEOUT_MS = 300_000; // 5 minutes
+const MESSAGE_CAP = 500;
 
 interface ConnectedClient {
     ws: WebSocket;
@@ -77,32 +75,23 @@ export class WsHub {
     private port = 0;
     private clients = new Map<WebSocket, ConnectedClient>();
     private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+    private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
-    private conversations: ConversationStore;
     private feedback: FeedbackManager;
     private pending: PendingManager;
-    private sessions: SessionWatcher;
 
     private workspaces: string[] = [];
-    private cursorTraceId = '';
-    private onFeedbackRequested?: (conversationId: string) => void;
+    private onFeedbackRequested?: () => void;
+
+    private messages: ConversationMessage[] = [];
+    private projHash = '';
 
     constructor() {
-        this.conversations = new ConversationStore(process.pid, []);
         this.feedback = new FeedbackManager();
         this.pending = new PendingManager();
-        this.sessions = new SessionWatcher(process.pid);
 
         this.pending.onPendingDelivered((delivery) => {
-            this._onPendingDelivered(delivery.conversationId, delivery.comments, delivery.images);
-        });
-
-        this.sessions.onSessionRegistered((session) => {
-            this._onSessionRegistered(session);
-        });
-
-        this.sessions.onSessionEnded((conversationId) => {
-            this._onSessionEnded(conversationId);
+            this._onPendingDelivered(delivery.comments, delivery.images);
         });
     }
 
@@ -110,14 +99,12 @@ export class WsHub {
 
     setWorkspaces(workspaces: string[]): void {
         this.workspaces = workspaces;
-        this.conversations.setWorkspaces(workspaces);
+        if (workspaces.length > 0) {
+            this.projHash = projectHash(workspaces[0]);
+        }
     }
 
-    setCursorTraceId(traceId: string): void {
-        this.cursorTraceId = traceId;
-    }
-
-    onFeedbackRequest(cb: (conversationId: string) => void): void {
+    onFeedbackRequest(cb: () => void): void {
         this.onFeedbackRequested = cb;
     }
 
@@ -148,14 +135,12 @@ export class WsHub {
         this._cleanup();
 
         cleanupStaleServers();
-        cleanupStaleSessions();
 
+        this._loadProject();
         this.port = await this._findPort();
         await this._startServer();
         this._registerServer();
         this._startHeartbeat();
-        this.sessions.start();
-        this._scanExistingSessions();
 
         wsLog(`server started: port=${this.port} pid=${process.pid} ws=${JSON.stringify(this.workspaces)}`);
         return this.port;
@@ -170,9 +155,12 @@ export class WsHub {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
         }
+        if (this.saveTimer) {
+            clearTimeout(this.saveTimer);
+            this.saveTimer = null;
+        }
 
-        this.sessions.stop();
-        this.pending.cleanup();
+        this.pending.clear();
 
         for (const [, client] of this.clients) {
             try { client.ws.close(); } catch { /* ignore */ }
@@ -184,7 +172,45 @@ export class WsHub {
         if (this.wss) { this.wss.close(); this.wss = null; }
         if (this.server) { this.server.close(); this.server = null; }
 
-        deleteServer(process.pid);
+        for (const ws of this.workspaces) {
+            deleteServerByHash(projectHash(ws));
+        }
+    }
+
+    // ── Project Persistence ─────────────────────────────────
+
+    private _loadProject(): void {
+        if (!this.projHash) return;
+        const proj = readProject(this.projHash);
+        if (proj) {
+            this.messages = proj.messages.slice(-MESSAGE_CAP);
+        }
+    }
+
+    private _saveProjectDebounced(): void {
+        if (this.saveTimer) return;
+        this.saveTimer = setTimeout(() => {
+            this.saveTimer = null;
+            this._saveProjectNow();
+        }, 1000);
+    }
+
+    private _saveProjectNow(): void {
+        if (!this.projHash || this.workspaces.length === 0) return;
+        const state: ProjectState = {
+            projectPath: this.workspaces[0],
+            messages: this.messages.slice(-MESSAGE_CAP),
+            lastActive: Date.now(),
+        };
+        writeProject(this.projHash, state);
+    }
+
+    private _addMessage(msg: ConversationMessage): void {
+        this.messages.push(msg);
+        if (this.messages.length > MESSAGE_CAP) {
+            this.messages = this.messages.slice(-MESSAGE_CAP);
+        }
+        this._saveProjectDebounced();
     }
 
     // ── Server Setup ────────────────────────────────────────
@@ -223,30 +249,16 @@ export class WsHub {
             return;
         }
 
-        const pendingMatch = pathname.match(/^\/pending\/(.+)$/);
-        if (req.method === 'GET' && pendingMatch) {
-            const conversationId = decodeURIComponent(pendingMatch[1]);
+        if (req.method === 'GET' && pathname === '/pending') {
             const consume = url.searchParams.get('consume') === '1';
-
-            if (consume) {
-                const entry = this.pending.consume(conversationId);
-                if (entry) {
-                    wsLog(`HTTP consume pending: conv=${conversationId} comments=${entry.comments.length}`);
-                    res.writeHead(200);
-                    res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
-                } else {
-                    res.writeHead(404);
-                    res.end(JSON.stringify({ error: 'no_pending' }));
-                }
+            const entry = consume ? this.pending.consume() : this.pending.read();
+            if (entry) {
+                if (consume) wsLog(`HTTP consume pending: comments=${entry.comments.length}`);
+                res.writeHead(200);
+                res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
             } else {
-                const entry = this.pending.read(conversationId);
-                if (entry) {
-                    res.writeHead(200);
-                    res.end(JSON.stringify({ comments: entry.comments, images: entry.images }));
-                } else {
-                    res.writeHead(404);
-                    res.end(JSON.stringify({ error: 'no_pending' }));
-                }
+                res.writeHead(404);
+                res.end(JSON.stringify({ error: 'no_pending' }));
             }
             return;
         }
@@ -256,14 +268,15 @@ export class WsHub {
     }
 
     private _registerServer(): void {
-        writeServer({
-            port: this.port,
-            pid: process.pid,
-            workspaces: this.workspaces,
-            cursorTraceId: this.cursorTraceId,
-            version: VERSION,
-            started_at: Date.now(),
-        });
+        for (const ws of this.workspaces) {
+            writeServer(projectHash(ws), {
+                port: this.port,
+                pid: process.pid,
+                projectPath: ws,
+                version: VERSION,
+                started_at: Date.now(),
+            });
+        }
     }
 
     // ── Connection Handling ─────────────────────────────────
@@ -288,8 +301,14 @@ export class WsHub {
         });
 
         ws.on('pong', () => { client.lastPong = Date.now(); });
-        ws.on('close', () => { this.clients.delete(ws); });
-        ws.on('error', () => { this.clients.delete(ws); });
+        ws.on('close', () => {
+            this.clients.delete(ws);
+            this.feedback.rejectByClient(ws);
+        });
+        ws.on('error', () => {
+            this.clients.delete(ws);
+            this.feedback.rejectByClient(ws);
+        });
     }
 
     private _routeMessage(ws: WebSocket, client: ConnectedClient, msg: WSMessage): void {
@@ -305,7 +324,7 @@ export class WsHub {
             case 'feedback_request': {
                 const req = validateMessage(FeedbackRequestSchema, msg, 'feedback_request');
                 if (!req) break;
-                this._handleFeedbackRequest(ws, req);
+                this._handleFeedbackRequest(ws, req as FeedbackRequest & { session_id: string });
                 break;
             }
             case 'feedback_response': {
@@ -320,30 +339,16 @@ export class WsHub {
                 this._handleQueuePending(qp);
                 break;
             }
-            case 'get_conversations':
-                this._sendConversationsList(ws);
-                break;
-            case 'load_conversation': {
-                const lc = validateMessage(LoadConversationSchema, msg, 'load_conversation');
-                if (!lc) break;
-                this._sendConversationData(ws, lc.conversation_id);
-                break;
-            }
             case 'dismiss_feedback': {
                 const df = validateMessage(DismissFeedbackSchema, msg, 'dismiss_feedback');
                 if (!df) break;
                 this._handleDismiss(df.session_id);
                 break;
             }
-            case 'close_tab': {
-                const ct = validateMessage(CloseTabSchema, msg, 'close_tab');
-                if (!ct) break;
-                this._handleCloseTab(ct.conversation_id);
+            case 'get_state': {
+                this._sendState(ws);
                 break;
             }
-            case 'get_sessions':
-                this._send(ws, { type: 'sessions_list', sessions: this.sessions.scanExisting() });
-                break;
             case 'ping':
             case 'heartbeat':
                 client.lastPong = Date.now();
@@ -354,50 +359,32 @@ export class WsHub {
 
     // ── Feedback Flow ───────────────────────────────────────
 
-    private _createFeedbackRequestWithTimeout(
-        sessionId: string,
-        conversationId: string,
-        mcpWs: WebSocket
-    ): Promise<import('./feedbackManager').FeedbackResult> {
-        let timeoutId: ReturnType<typeof setTimeout>;
-        const timeoutPromise = new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(
-                () => reject(new Error('Feedback request timed out')),
-                FEEDBACK_TIMEOUT_MS
-            );
-        });
-        return Promise.race([
-            this.feedback.createRequest(sessionId, conversationId, mcpWs),
-            timeoutPromise,
-        ]).finally(() => clearTimeout(timeoutId));
-    }
-
-    private _handleFeedbackRequest(mcpWs: WebSocket, req: ValidatedFeedbackRequest): void {
-        wsLog(`feedbackRequest: session=${req.session_id} conv=${req.conversation_id} summary=${req.summary.slice(0, 60)}`);
+    private _handleFeedbackRequest(mcpWs: WebSocket, req: FeedbackRequest & { session_id: string }): void {
+        wsLog(`feedbackRequest: session=${req.session_id} summary=${req.summary.slice(0, 60)}`);
         const sessionId = req.session_id;
-        const conversationId = this.conversations.resolveConversationId(req.conversation_id);
 
-        if (conversationId) {
-            this.conversations.ensureConversation(conversationId, sessionId, req.summary);
-        }
+        const label = req.label || req.summary.slice(0, 60);
 
-        const promise = this.feedback.createRequest(sessionId, conversationId, mcpWs);
+        this._addMessage({
+            role: 'ai',
+            content: req.summary,
+            timestamp: new Date().toISOString(),
+            session_id: sessionId,
+        });
 
-        const conv = this.conversations.getConversation(conversationId);
-        const label = req.label || conv?.label || req.summary.slice(0, 60);
+        const promise = this.feedback.createRequest(sessionId, mcpWs);
 
         this._broadcastToWebviews({
             type: 'session_updated',
             session_info: {
                 session_id: sessionId,
-                conversation_id: conversationId,
                 summary: req.summary,
                 label,
             },
         });
 
         if (this.onFeedbackRequested) {
-            this.onFeedbackRequested(conversationId);
+            this.onFeedbackRequested();
         }
 
         promise.then((result) => {
@@ -418,20 +405,17 @@ export class WsHub {
     }
 
     private _handleFeedbackResponse(res: FeedbackResponse): void {
-        const convId = this.feedback.getConversationId(res.session_id) || res.conversation_id;
-        wsLog(`feedbackResponse: session=${res.session_id} conv=${convId} feedback=${res.feedback.slice(0, 60)}`);
+        wsLog(`feedbackResponse: session=${res.session_id} feedback=${res.feedback.slice(0, 60)}`);
 
-        if (convId) {
-            this.conversations.addMessage(convId, {
-                role: 'user',
-                content: res.feedback,
-                timestamp: new Date().toISOString(),
-                session_id: res.session_id,
-                images: res.images,
-            });
-            this.conversations.markRunning(convId);
-            this.pending.clear(convId);
-        }
+        this._addMessage({
+            role: 'user',
+            content: res.feedback,
+            timestamp: new Date().toISOString(),
+            session_id: res.session_id,
+            images: res.images,
+        });
+
+        this.pending.clear();
 
         const feedbackWithReminder = res.feedback + FEEDBACK_REMINDER;
         this.feedback.resolve(res.session_id, {
@@ -442,144 +426,79 @@ export class WsHub {
         this._broadcastToWebviews({
             type: 'feedback_submitted',
             session_id: res.session_id,
-            conversation_id: convId,
             feedback: res.feedback,
-            images: res.images,
         });
     }
 
     private _handleDismiss(sessionId: string): void {
-        const convId = this.feedback.getConversationId(sessionId);
         this.feedback.resolve(sessionId, { feedback: '[Dismissed by user]' });
 
         this._broadcastToWebviews({
             type: 'feedback_submitted',
             session_id: sessionId,
-            conversation_id: convId,
         });
     }
 
     // ── Pending Queue ───────────────────────────────────────
 
-    private _handleQueuePending(qp: { conversation_id: string; comments: string[]; images?: string[] }): void {
-        wsLog(`queuePending: conv=${qp.conversation_id} comments=${qp.comments.length} images=${(qp.images ?? []).length}`);
-        const conversationId = qp.conversation_id;
+    private _handleQueuePending(qp: { comments: string[]; images?: string[] }): void {
+        wsLog(`queuePending: comments=${qp.comments.length} images=${(qp.images ?? []).length}`);
         const comments = qp.comments.filter(c => c.trim());
         const images = qp.images ?? [];
 
-        this.pending.handleQueue(conversationId, comments, images);
-        this.conversations.updatePendingQueue(conversationId, comments);
+        this.pending.set(comments, images);
 
         this._broadcastToWebviews({
             type: 'pending_synced',
-            conversation_id: conversationId,
             comments,
             images,
         });
     }
 
-    private _handleCloseTab(conversationId: string): void {
-        if (!conversationId) return;
-        this.conversations.markArchived(conversationId);
-        this.pending.clear(conversationId);
-        this.feedback.resolveByConversation(conversationId, { feedback: '[Tab closed by user]' });
-
-        this._broadcastToWebviews({
-            type: 'tab_closed',
-            conversation_id: conversationId,
-        });
-    }
-
     // ── Pending Delivery (from HTTP consume) ─────────────────
 
-    private _onPendingDelivered(conversationId: string, comments: string[], images: string[]): void {
-        const conv = this.conversations.getConversation(conversationId);
-        const deliveredComments = comments.length > 0 ? comments : (conv ? [...conv.pending_queue] : []);
-
-        this.conversations.savePendingDelivery(conversationId, deliveredComments, images);
+    private _onPendingDelivered(comments: string[], images: string[]): void {
+        for (const comment of comments) {
+            this._addMessage({
+                role: 'user',
+                content: comment,
+                timestamp: new Date().toISOString(),
+                pending_delivered: true,
+            });
+        }
+        if (comments.length === 0 && images.length > 0) {
+            this._addMessage({
+                role: 'user',
+                content: '',
+                timestamp: new Date().toISOString(),
+                pending_delivered: true,
+                images,
+            });
+        } else if (images.length > 0 && this.messages.length > 0) {
+            const last = this.messages[this.messages.length - 1];
+            if (last.pending_delivered) {
+                last.images = images;
+            }
+        }
 
         this._broadcastToWebviews({
             type: 'pending_delivered',
-            conversation_id: conversationId,
-            comments: deliveredComments,
+            comments,
             images,
         });
     }
 
-    // ── Session Events ──────────────────────────────────────
+    // ── State Sync ──────────────────────────────────────────
 
-    private _onSessionRegistered(session: import('../types').SessionRegistration): void {
-        wsLog(`sessionRegistered: conv=${session.conversation_id} pid=${session.server_pid} myPid=${process.pid}`);
-        const conv = this.conversations.registerSession(session);
-        if (!conv) return;
-
-        this._broadcastToWebviews({
-            type: 'session_registered',
-            session,
-            conversation: conv,
+    private _sendState(ws: WebSocket): void {
+        const entry = this.pending.read();
+        this._send(ws, {
+            type: 'state_sync',
+            messages: this.messages,
+            pending_comments: entry?.comments ?? [],
+            pending_images: entry?.images ?? [],
+            pending_sessions: this.feedback.pendingSessionIds(),
         });
-    }
-
-    private _onSessionEnded(conversationId: string): void {
-        this.conversations.markEnded(conversationId);
-
-        this._broadcastToWebviews({
-            type: 'session_ended',
-            conversation_id: conversationId,
-        });
-    }
-
-    private _scanExistingSessions(): void {
-        const sessions = this.sessions.scanExisting();
-        for (const session of sessions) {
-            this._onSessionRegistered(session);
-        }
-
-        const restoredConvs = this.conversations.getRestoredConversations();
-        for (const conv of restoredConvs) {
-            this.conversations.adoptConversation(conv);
-
-            this._broadcastToWebviews({
-                type: 'session_registered',
-                session: {
-                    conversation_id: conv.conversation_id,
-                    workspace_roots: conv.workspace_roots,
-                    model: conv.model,
-                    server_pid: process.pid,
-                    started_at: conv.started_at,
-                },
-                conversation: conv,
-            });
-        }
-    }
-
-    // ── Data Queries ────────────────────────────────────────
-
-    private _sendConversationsList(ws: WebSocket): void {
-        const conversations = this.conversations.getConversationsList().map(c => {
-            const pendingSessions = this.feedback.getSessionsForConversation(c.conversation_id);
-            return {
-                conversation_id: c.conversation_id,
-                model: c.model,
-                label: c.label,
-                state: c.state,
-                started_at: c.started_at,
-                ended_at: c.ended_at,
-                message_count: c.messages.length,
-                pending_count: c.pending_queue.length,
-                is_background: c.is_background,
-                active_session_id: c.active_session_id || null,
-                pending_sessions: pendingSessions,
-            };
-        });
-        this._send(ws, { type: 'conversations_list', conversations });
-    }
-
-    private _sendConversationData(ws: WebSocket, conversationId: string): void {
-        const conv = this.conversations.getConversation(conversationId);
-        if (conv) {
-            this._send(ws, { type: 'conversation_loaded', conversation: conv });
-        }
     }
 
     // ── Heartbeat ───────────────────────────────────────────
