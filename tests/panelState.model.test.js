@@ -137,7 +137,7 @@ class PendingDeliveredCmd {
             comments: [...real.pendingQueue],
             images: [],
         });
-        model.messageCount += model.pendingCount;
+        model.messageCount += 1;
         model.pendingCount = 0;
         model.pendingImageCount = 0;
     }

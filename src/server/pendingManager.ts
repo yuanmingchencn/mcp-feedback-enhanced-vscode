@@ -13,7 +13,6 @@ export interface PendingDelivery {
 export interface PendingEntry {
     comments: string[];
     images: string[];
-    timestamp: number;
 }
 
 export class PendingManager {
@@ -33,7 +32,6 @@ export class PendingManager {
         this.entry = {
             comments: queue,
             images: images.length > 0 ? images : [],
-            timestamp: Date.now(),
         };
     }
 

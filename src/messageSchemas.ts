@@ -10,14 +10,12 @@ import { z } from 'zod';
 export const RegisterSchema = z.object({
     type: z.literal('register'),
     clientType: z.enum(['mcp-server', 'webview']),
-    projectPath: z.string().optional(),
 });
 
 export const FeedbackRequestSchema = z.object({
     type: z.literal('feedback_request'),
     session_id: z.string().min(1),
     summary: z.string().min(1),
-    label: z.string().optional(),
     project_directory: z.string().optional(),
 });
 
@@ -52,8 +50,6 @@ export const SessionUpdatedOutSchema = z.object({
     session_info: z.object({
         session_id: z.string().min(1),
         summary: z.string(),
-        model: z.string().optional(),
-        label: z.string().min(1),
     }),
 });
 

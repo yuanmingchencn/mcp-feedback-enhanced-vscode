@@ -63,7 +63,6 @@ const MESSAGE_CAP = 500;
 interface ConnectedClient {
     ws: WebSocket;
     clientType: 'webview' | 'mcp-server' | 'unknown';
-    projectPath?: string;
     lastPong: number;
 }
 
@@ -317,8 +316,7 @@ export class WsHub {
                 const reg = validateMessage(RegisterSchema, msg, 'register');
                 if (!reg) break;
                 client.clientType = reg.clientType;
-                client.projectPath = reg.projectPath;
-                wsLog(`client registered: type=${client.clientType} project=${client.projectPath || ''}`);
+                wsLog(`client registered: type=${client.clientType}`);
                 break;
             }
             case 'feedback_request': {
@@ -363,8 +361,6 @@ export class WsHub {
         wsLog(`feedbackRequest: session=${req.session_id} summary=${req.summary.slice(0, 60)}`);
         const sessionId = req.session_id;
 
-        const label = req.label || req.summary.slice(0, 60);
-
         this._addMessage({
             role: 'ai',
             content: req.summary,
@@ -379,7 +375,6 @@ export class WsHub {
             session_info: {
                 session_id: sessionId,
                 summary: req.summary,
-                label,
             },
         });
 
@@ -458,28 +453,14 @@ export class WsHub {
     // ── Pending Delivery (from HTTP consume) ─────────────────
 
     private _onPendingDelivered(comments: string[], images: string[]): void {
-        for (const comment of comments) {
-            this._addMessage({
-                role: 'user',
-                content: comment,
-                timestamp: new Date().toISOString(),
-                pending_delivered: true,
-            });
-        }
-        if (comments.length === 0 && images.length > 0) {
-            this._addMessage({
-                role: 'user',
-                content: '',
-                timestamp: new Date().toISOString(),
-                pending_delivered: true,
-                images,
-            });
-        } else if (images.length > 0 && this.messages.length > 0) {
-            const last = this.messages[this.messages.length - 1];
-            if (last.pending_delivered) {
-                last.images = images;
-            }
-        }
+        const combined = comments.join('\n\n') || '';
+        this._addMessage({
+            role: 'user',
+            content: combined,
+            timestamp: new Date().toISOString(),
+            pending_delivered: true,
+            images: images.length > 0 ? images : undefined,
+        });
 
         this._broadcastToWebviews({
             type: 'pending_delivered',

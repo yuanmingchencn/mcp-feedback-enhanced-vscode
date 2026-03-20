@@ -114,7 +114,6 @@ function requestFeedback(
     sessionId: string,
     summary: string,
     projectDirectory?: string,
-    label?: string,
 ): Promise<{ feedback: string; images?: string[] }> {
     return new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -148,7 +147,6 @@ function requestFeedback(
         ws.send(JSON.stringify({
             type: 'feedback_request',
             session_id: sessionId,
-            label: label || '',
             project_directory: projectDirectory,
             summary,
         }));
@@ -251,10 +249,6 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
                         type: 'string',
                         description: 'Optional. The project directory path.',
                     },
-                    agent_name: {
-                        type: 'string',
-                        description: 'Display name for the conversation.',
-                    },
                 },
             },
         },
@@ -290,11 +284,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     if (name === 'interactive_feedback') {
         const parsed = z.object({
             summary: z.string(),
-            agent_name: z.string().optional(),
             project_directory: z.string().optional(),
         }).parse(args);
 
-        const { summary, agent_name, project_directory } = parsed;
+        const { summary, project_directory } = parsed;
         const sessionId = `s_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
         try {
@@ -304,7 +297,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const ws = await connectToExtension(extensionServer.port);
                 try {
                     const result = await requestFeedback(
-                        ws, sessionId, summary, project_directory, agent_name || ''
+                        ws, sessionId, summary, project_directory
                     );
                     const content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> = [
                         { type: 'text', text: result.feedback + FEEDBACK_REMINDER },

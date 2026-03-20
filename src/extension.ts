@@ -38,7 +38,6 @@ function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
     }
     html = html.replace(/\{\{SERVER_URL\}\}/g, `ws://127.0.0.1:${serverPort}`);
     html = html.replace(/\{\{PROJECT_PATH\}\}/g, getWorkspaces()[0] || '');
-    html = html.replace(/\{\{SESSION_ID\}\}/g, `ext_${Date.now()}`);
     return html;
 }
 
@@ -64,7 +63,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     });
 
     const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
-    bottomProvider = new FeedbackViewProvider(getHtml, 'bottom');
+    bottomProvider = new FeedbackViewProvider(getHtml);
 
     const forceResetCallback = async (): Promise<number> => {
         await wsServer.stop();

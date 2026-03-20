@@ -826,7 +826,7 @@ const PROJECT_PATH = '{{PROJECT_PATH}}';
             ws = new WebSocket(SERVER_URL);
             ws.onopen = function () {
                 reconnectAttempts = 0;
-                ws.send(JSON.stringify({ type: 'register', clientType: 'webview', projectPath: PROJECT_PATH }));
+                ws.send(JSON.stringify({ type: 'register', clientType: 'webview' }));
             };
             ws.onmessage = function (e) {
                 try {

@@ -194,29 +194,15 @@
         _onPendingDelivered(msg) {
             var comments = msg.comments || [];
             var images = msg.images || [];
+            var combined = comments.join('\n\n') || '';
 
-            for (var i = 0; i < comments.length; i++) {
-                var extra = { pending_delivered: true };
-                if (i === comments.length - 1 && images.length > 0) {
-                    extra.images = images;
-                }
-                this.messages.push({
-                    role: 'user',
-                    content: comments[i],
-                    timestamp: new Date().toISOString(),
-                    pending_delivered: true,
-                    images: (i === comments.length - 1 && images.length > 0) ? images : undefined,
-                });
-            }
-            if (comments.length === 0 && images.length > 0) {
-                this.messages.push({
-                    role: 'user',
-                    content: '',
-                    timestamp: new Date().toISOString(),
-                    pending_delivered: true,
-                    images: images,
-                });
-            }
+            this.messages.push({
+                role: 'user',
+                content: combined,
+                timestamp: new Date().toISOString(),
+                pending_delivered: true,
+                images: images.length > 0 ? images : undefined,
+            });
 
             this.pendingQueue = [];
             this.pendingImages = [];

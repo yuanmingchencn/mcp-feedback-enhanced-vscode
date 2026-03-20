@@ -1,5 +1,5 @@
 /**
- * Webview view provider for sidebar, bottom panel, and editor tabs.
+ * Webview view provider for the bottom panel.
  *
  * Responsibilities:
  * - Resolve webview with generated HTML
@@ -17,13 +17,11 @@ type HtmlGetter = () => string;
 export class FeedbackViewProvider implements vscode.WebviewViewProvider {
     private _view: vscode.WebviewView | null = null;
     private _getHtml: HtmlGetter;
-    private _location: 'sidebar' | 'bottom';
     private _forceResetCallback?: () => Promise<number>;
     private _fileWatcher?: fs.FSWatcher;
 
-    constructor(getHtml: HtmlGetter, location: 'sidebar' | 'bottom') {
+    constructor(getHtml: HtmlGetter) {
         this._getHtml = getHtml;
-        this._location = location;
     }
 
     updateHtmlGetter(getHtml: HtmlGetter): void {
@@ -177,11 +175,7 @@ export class FeedbackViewProvider implements vscode.WebviewViewProvider {
     }
 
     private _focusPanel(): void {
-        if (this._location === 'sidebar') {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanel.focus');
-        } else {
-            vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
-        }
+        vscode.commands.executeCommand('mcp-feedback-enhanced.feedbackPanelBottom.focus');
     }
 
     // Hot-reload: watch panel.html for changes in dev mode

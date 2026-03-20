@@ -16,7 +16,6 @@ interface PendingFeedback {
     mcpClient: WebSocket;
     resolve: (result: FeedbackResult) => void;
     reject: (error: Error) => void;
-    timestamp: number;
 }
 
 export class FeedbackManager {
@@ -27,13 +26,7 @@ export class FeedbackManager {
         mcpClient: WebSocket
     ): Promise<FeedbackResult> {
         return new Promise<FeedbackResult>((resolve, reject) => {
-            this.pending.set(sessionId, {
-                sessionId,
-                mcpClient,
-                resolve,
-                reject,
-                timestamp: Date.now(),
-            });
+            this.pending.set(sessionId, { sessionId, mcpClient, resolve, reject });
         });
     }
 

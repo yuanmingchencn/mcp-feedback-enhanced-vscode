@@ -129,7 +129,7 @@ describe('Extension -> Webview contracts', () => {
 
             const msg = await sessionUpdatedPromise;
             schemas.SessionUpdatedOutSchema.parse(msg);
-            assert.ok(msg.session_info.label, 'label must be non-empty');
+            assert.ok(msg.session_info.session_id, 'session_id must be present');
         } finally {
             await closeClient(mcpWs);
             await closeClient(webviewWs);
@@ -216,7 +216,7 @@ describe('Webview -> Extension contracts', () => {
     });
 
     it('register matches RegisterSchema', () => {
-        schemas.RegisterSchema.parse({ type: 'register', clientType: 'webview', projectPath: '/test' });
+        schemas.RegisterSchema.parse({ type: 'register', clientType: 'webview' });
         schemas.RegisterSchema.parse({ type: 'register', clientType: 'mcp-server' });
     });
 });
@@ -262,11 +262,11 @@ describe('Hook output contracts', () => {
 // ─── Schema rejection tests ────────────────────────────────
 
 describe('Schema rejection tests', () => {
-    it('session_updated without label is rejected', () => {
+    it('session_updated without session_id is rejected', () => {
         assert.throws(
             () => schemas.SessionUpdatedOutSchema.parse({
                 type: 'session_updated',
-                session_info: { session_id: 's1', summary: 'test' },
+                session_info: { summary: 'test' },
             }),
             (err) => err.name === 'ZodError'
         );

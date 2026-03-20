@@ -149,7 +149,7 @@ describe('client registration', () => {
         await startFreshServer();
         const { ws } = await createClientAndEstablish(serverPort);
         try {
-            ws.send(JSON.stringify({ type: 'register', clientType: 'webview', projectPath: '/test' }));
+            ws.send(JSON.stringify({ type: 'register', clientType: 'webview' }));
             await yieldToEventLoop();
             const { webviews, mcpServers } = server.getConnectedClients();
             assert.strictEqual(webviews, 1);

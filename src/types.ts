@@ -41,7 +41,6 @@ export interface FeedbackRequest {
     type: 'feedback_request';
     session_id: string;
     summary: string;
-    label?: string;
     project_directory?: string;
 }
 
@@ -58,7 +57,5 @@ export interface SessionUpdate {
     session_info: {
         session_id: string;
         summary: string;
-        model?: string;
-        label?: string;
     };
 }
