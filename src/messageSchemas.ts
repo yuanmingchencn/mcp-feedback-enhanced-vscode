@@ -85,29 +85,7 @@ export const StateSyncOutSchema = z.object({
     pending_images: z.array(z.string()),
 });
 
-// ─── 4. Simple messages ────────────────────────────────────────────────────
-
-export const PingSchema = z.object({ type: z.literal('ping') });
-export const PongSchema = z.object({ type: z.literal('pong') });
-export const HeartbeatSchema = z.object({ type: z.literal('heartbeat') });
-
-// ─── 5. Hook schemas ───────────────────────────────────────────────────────
-
-export const HookInputSchema = z.object({
-    hook_event_name: z.enum([
-        'sessionStart',
-        'stop',
-        'preToolUse',
-        'beforeShellExecution',
-        'beforeMCPExecution',
-        'subagentStart',
-    ]),
-    conversation_id: z.string().optional(),
-    model: z.string().optional(),
-    tool_name: z.string().optional(),
-    workspace_roots: z.array(z.string()).optional(),
-    loop_count: z.number().optional(),
-});
+// ─── 4. Hook output schemas (for contract tests) ───────────────────────────
 
 export const PreToolUseOutputSchema = z.discriminatedUnion('decision', [
     z.object({ decision: z.literal('allow') }),
@@ -123,20 +101,7 @@ export const BeforeShellOutputSchema = z.union([
     }),
 ]);
 
-// ─── 6. Discriminated union for incoming messages ───────────────────────────
-
-export const IncomingMessageSchema = z.discriminatedUnion('type', [
-    RegisterSchema,
-    FeedbackRequestSchema,
-    FeedbackResponseSchema,
-    QueuePendingSchema,
-    DismissFeedbackSchema,
-    GetStateSchema,
-    PingSchema,
-    HeartbeatSchema,
-]);
-
-// ─── 7. Helper function for validation ──────────────────────────────────────
+// ─── 5. Helper function for validation ──────────────────────────────────────
 
 export function validateMessage<T extends z.ZodType>(
     schema: T,
