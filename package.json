@@ -2,7 +2,7 @@
   "name": "mcp-feedback-enhanced",
   "displayName": "MCP Feedback Enhanced",
   "description": "Interactive feedback collection for AI assistants with multi-session tabs",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "publisher": "mcp-feedback",
   "license": "MIT",
   "repository": {

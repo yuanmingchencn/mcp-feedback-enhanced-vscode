@@ -252,9 +252,16 @@ function deployCursorHooks(extensionPath: string): void {
         const SOURCE_TAG = 'mcp-feedback-enhanced';
         const LEGACY_TAGS = ['mcp-feedback-v2'];
 
+        let nodeBin = 'node';
+        try {
+            const resolved = require('child_process')
+                .execSync('which node', { encoding: 'utf-8', timeout: 5000, env: process.env })
+                .trim();
+            if (resolved) { nodeBin = resolved; }
+        } catch { /* keep bare 'node' as fallback */ }
         const hookEntries: Record<string, Record<string, unknown>> = {
-            sessionStart: { command: `node ${sessionStartHook}` },
-            preToolUse: { command: `node ${preToolUseHook}` },
+            sessionStart: { command: `${nodeBin} ${sessionStartHook}` },
+            preToolUse: { command: `${nodeBin} ${preToolUseHook}` },
         };
 
         for (const [event, entry] of Object.entries(hookEntries)) {
