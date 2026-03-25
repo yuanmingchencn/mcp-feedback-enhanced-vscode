@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.3] - 2026-03-25
+
+### Subagent Exclusion
+
+- Added rule 4: subagents (dispatched via Task tool) are explicitly told NOT to call `interactive_feedback`. Only the parent agent should call it.
+- Fixes browser fallback spam when subagents try to call `interactive_feedback` and fall back to opening browser windows.
+
 ## [2.3.2] - 2026-03-25
 
 ### User-Level Rules Deployment

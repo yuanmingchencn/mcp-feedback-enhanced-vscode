@@ -302,6 +302,8 @@ const RULES_CONTENT = [
     '---',
     '',
     '[MCP Feedback Enhanced] USAGE RULES:',
+    'These rules apply ONLY to the main agent in Agent mode (direct user conversation).',
+    'Do NOT call interactive_feedback if you are a subagent, or in Plan/Ask/Debug mode.',
     '1. You MUST call interactive_feedback before ending your turn.',
     '2. Only when the user explicitly confirms you can stop should you end. The decision to exit is ALWAYS the user\'s, never yours.',
     '3. If you have completed your task, call interactive_feedback with a summary and ask the user for next steps.',
