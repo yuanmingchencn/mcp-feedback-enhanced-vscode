@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.2] - 2026-03-25
+
+### User-Level Rules Deployment
+
+- Rules file (`mcp-feedback-enhanced.mdc`) is now deployed to `~/.cursor/rules/` (user-level) instead of per-workspace `.cursor/rules/`. This avoids polluting each project's git-tracked directory.
+- Old workspace-level rule files are automatically cleaned up on activation.
+
 ## [2.3.1] - 2026-03-25
 
 ### Feedback Error Notification

@@ -310,22 +310,24 @@ const RULES_CONTENT = [
 
 function deployCursorRules(): void {
     try {
-        const workspaces = getWorkspaces();
-        for (const ws of workspaces) {
-            const rulesDir = path.join(ws, '.cursor', 'rules');
-            const ruleFile = path.join(rulesDir, 'mcp-feedback-enhanced.mdc');
+        const rulesDir = path.join(os.homedir(), '.cursor', 'rules');
+        const ruleFile = path.join(rulesDir, 'mcp-feedback-enhanced.mdc');
 
-            fs.mkdirSync(rulesDir, { recursive: true });
+        fs.mkdirSync(rulesDir, { recursive: true });
 
-            let needsWrite = true;
-            if (fs.existsSync(ruleFile)) {
-                const existing = fs.readFileSync(ruleFile, 'utf-8');
-                if (existing === RULES_CONTENT) { needsWrite = false; }
-            }
+        let needsWrite = true;
+        if (fs.existsSync(ruleFile)) {
+            const existing = fs.readFileSync(ruleFile, 'utf-8');
+            if (existing === RULES_CONTENT) { needsWrite = false; }
+        }
 
-            if (needsWrite) {
-                fs.writeFileSync(ruleFile, RULES_CONTENT);
-            }
+        if (needsWrite) {
+            fs.writeFileSync(ruleFile, RULES_CONTENT);
+        }
+
+        for (const ws of getWorkspaces()) {
+            const wsRuleFile = path.join(ws, '.cursor', 'rules', 'mcp-feedback-enhanced.mdc');
+            try { fs.unlinkSync(wsRuleFile); } catch { /* already gone */ }
         }
     } catch (e) {
         console.error('[MCP Feedback] Failed to deploy rules:', e);

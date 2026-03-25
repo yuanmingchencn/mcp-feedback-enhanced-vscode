@@ -1,6 +1,6 @@
 {
   "name": "mcp-feedback-enhanced-server",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "MCP Feedback V2 Server - Interactive feedback collection with conversation-based routing",
   "type": "module",
   "main": "dist/index.js",
