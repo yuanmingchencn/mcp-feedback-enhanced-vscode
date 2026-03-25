@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.0] - 2026-03-25
+
+### Migrate USAGE RULES from Hook to Cursor Rules
+
+Replaced the `sessionStart` hook with a native `.cursor/rules/mcp-feedback-enhanced.mdc` file for injecting USAGE RULES. This is more reliable because Cursor rules are system-level directives that persist through context compression, whereas hook-injected `additional_context` was a one-shot injection vulnerable to being lost.
+
+### Added
+- **`deployCursorRules()`**: Writes an `alwaysApply: true` `.mdc` rule file to each workspace's `.cursor/rules/` directory on activation.
+
+### Changed
+- **Hook count reduced from 2 to 1**: Only `preToolUse` (`consume-pending.js`) remains active. `sessionStart` hook is retired.
+- **USAGE RULES delivery**: Moved from `sessionStart` hook `additional_context` to `.cursor/rules/mcp-feedback-enhanced.mdc`.
+
+### Removed
+- **`session-start.js` hook**: No longer needed — rules are now delivered via `.mdc` file.
+- **`sessionStart` hook registration**: Removed from `hooks.json` config and added to `RETIRED_HOOKS` for automatic cleanup.
+
 ## [2.1.4] - 2026-03-19
 
 ### HTTP-Based Pending System & Hook Refactor

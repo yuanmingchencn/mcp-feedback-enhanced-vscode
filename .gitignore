@@ -21,6 +21,7 @@ Thumbs.db
 .env.publish
 
 # Logs
+logs/
 *.log
 npm-debug.log*
 

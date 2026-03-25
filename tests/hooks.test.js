@@ -29,57 +29,6 @@ function runHook(scriptName, input) {
     return JSON.parse(result.toString());
 }
 
-describe('session-start hook', () => {
-    it('returns continue: true for sessionStart event', () => {
-        const result = runHook('session-start.js', {
-            hook_event_name: 'sessionStart',
-            workspace_roots: ['/test/workspace'],
-        });
-        assert.strictEqual(result.continue, true);
-    });
-
-    it('includes USAGE RULES in additional_context', () => {
-        const result = runHook('session-start.js', {
-            hook_event_name: 'sessionStart',
-            workspace_roots: ['/test/workspace'],
-        });
-        assert.ok(result.additional_context);
-        assert.ok(result.additional_context.includes('USAGE RULES'));
-        assert.ok(result.additional_context.includes('interactive_feedback'));
-    });
-
-    it('does not include conversation_id injection', () => {
-        const result = runHook('session-start.js', {
-            hook_event_name: 'sessionStart',
-            workspace_roots: ['/test/workspace'],
-        });
-        assert.ok(!result.additional_context.includes('Your conversation ID'));
-        assert.ok(!result.additional_context.includes('pass conversation_id'));
-    });
-
-    it('does not set MCP_FEEDBACK_SERVER_PID env', () => {
-        const result = runHook('session-start.js', {
-            hook_event_name: 'sessionStart',
-            workspace_roots: ['/test/workspace'],
-        });
-        assert.ok(!result.env || !result.env.MCP_FEEDBACK_SERVER_PID);
-    });
-
-    it('pending URL uses global path (no conversation_id in path)', () => {
-        const hookSrc = fs.readFileSync(path.join(hookDir, 'session-start.js'), 'utf-8');
-        assert.ok(hookSrc.includes("/pending?consume=1'"), 'Should use global /pending URL');
-        assert.ok(!hookSrc.includes('/pending/' + 'encodeURIComponent'), 'Should NOT have conversation_id in URL');
-    });
-
-    it('passes through non-sessionStart events', () => {
-        const result = runHook('session-start.js', {
-            hook_event_name: 'stop',
-        });
-        assert.strictEqual(result.continue, true);
-        assert.ok(!result.additional_context);
-    });
-});
-
 describe('consume-pending hook', () => {
     it('allows allowlisted tools', () => {
         const result = runHook('consume-pending.js', {

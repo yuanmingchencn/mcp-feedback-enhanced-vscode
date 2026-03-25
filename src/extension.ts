@@ -147,6 +147,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
 
     ensureMcpConfig(context.extensionPath);
     deployCursorHooks(context.extensionPath);
+    deployCursorRules();
     migratePendingFiles();
 
     context.subscriptions.push(...disposables);
@@ -225,7 +226,7 @@ function deployCursorHooks(extensionPath: string): void {
         const targetDir = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'hooks');
         fs.mkdirSync(targetDir, { recursive: true });
 
-        const hookFiles = ['hook-utils.js', 'session-start.js', 'consume-pending.js'];
+        const hookFiles = ['hook-utils.js', 'consume-pending.js'];
         for (const file of hookFiles) {
             const src = path.join(hooksSourceDir, file);
             if (fs.existsSync(src)) {
@@ -233,11 +234,10 @@ function deployCursorHooks(extensionPath: string): void {
             }
         }
 
-        for (const old of ['check-pending.js', 'agent-stop.js']) {
+        for (const old of ['check-pending.js', 'agent-stop.js', 'session-start.js']) {
             try { fs.unlinkSync(path.join(targetDir, old)); } catch { /* already gone */ }
         }
 
-        const sessionStartHook = path.join(targetDir, 'session-start.js');
         const preToolUseHook = path.join(targetDir, 'consume-pending.js');
         const hooksConfigPath = path.join(os.homedir(), '.cursor', 'hooks.json');
         let hooksConfig: Record<string, unknown> = {};
@@ -260,7 +260,6 @@ function deployCursorHooks(extensionPath: string): void {
             if (resolved) { nodeBin = resolved; }
         } catch { /* keep bare 'node' as fallback */ }
         const hookEntries: Record<string, Record<string, unknown>> = {
-            sessionStart: { command: `${nodeBin} ${sessionStartHook}` },
             preToolUse: { command: `${nodeBin} ${preToolUseHook}` },
         };
 
@@ -275,7 +274,7 @@ function deployCursorHooks(extensionPath: string): void {
             });
         }
 
-        const RETIRED_HOOKS = ['stop'];
+        const RETIRED_HOOKS = ['stop', 'sessionStart'];
         for (const event of RETIRED_HOOKS) {
             if (hooks[event]) {
                 hooks[event] = hooks[event].filter(h =>
@@ -290,6 +289,42 @@ function deployCursorHooks(extensionPath: string): void {
         fs.writeFileSync(hooksConfigPath, JSON.stringify(hooksConfig, null, 2));
     } catch (e) {
         console.error('[MCP Feedback] Failed to deploy hooks:', e);
+    }
+}
+
+const RULES_CONTENT = [
+    '---',
+    'alwaysApply: true',
+    '---',
+    '',
+    '[MCP Feedback Enhanced] USAGE RULES:',
+    '1. You MUST call interactive_feedback before ending your turn.',
+    '2. Only when the user explicitly confirms you can stop should you end. The decision to exit is ALWAYS the user\'s, never yours.',
+    '3. If you have completed your task, call interactive_feedback with a summary and ask the user for next steps.',
+    '',
+].join('\n');
+
+function deployCursorRules(): void {
+    try {
+        const workspaces = getWorkspaces();
+        for (const ws of workspaces) {
+            const rulesDir = path.join(ws, '.cursor', 'rules');
+            const ruleFile = path.join(rulesDir, 'mcp-feedback-enhanced.mdc');
+
+            fs.mkdirSync(rulesDir, { recursive: true });
+
+            let needsWrite = true;
+            if (fs.existsSync(ruleFile)) {
+                const existing = fs.readFileSync(ruleFile, 'utf-8');
+                if (existing === RULES_CONTENT) { needsWrite = false; }
+            }
+
+            if (needsWrite) {
+                fs.writeFileSync(ruleFile, RULES_CONTENT);
+            }
+        }
+    } catch (e) {
+        console.error('[MCP Feedback] Failed to deploy rules:', e);
     }
 }
 
