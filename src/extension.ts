@@ -90,6 +90,10 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
         cancelFeedbackReminders();
     });
 
+    wsServer.onFeedbackError((reason) => {
+        vscode.window.showWarningMessage(`MCP Feedback error: ${reason}`);
+    });
+
     const getHtml = () => _loadWebviewHtml(context.extensionPath, port);
     bottomProvider = new FeedbackViewProvider(getHtml);
 

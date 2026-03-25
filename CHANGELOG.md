@@ -2,6 +2,13 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.3.1] - 2026-03-25
+
+### Feedback Error Notification
+
+- Show a Cursor warning notification (`vscode.window.showWarningMessage`) when a feedback session fails internally (e.g., enqueue rejected, server shutting down).
+- Improved MCP server error logging: logs browser fallback failures separately.
+
 ## [2.3.0] - 2026-03-25
 
 ### Migrate USAGE RULES from Hook to Cursor Rules

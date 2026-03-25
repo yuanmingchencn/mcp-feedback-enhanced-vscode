@@ -14,6 +14,7 @@ interface FeedbackFlowDeps {
     sendError: (ws: WebSocket, error: Error) => void;
     onFeedbackRequested?: () => void;
     onFeedbackResolved?: () => void;
+    onFeedbackError?: (reason: string) => void;
     log: (msg: string) => void;
 }
 
@@ -30,6 +31,10 @@ export class FeedbackFlow {
 
     setOnFeedbackResolved(cb?: () => void): void {
         this.deps.onFeedbackResolved = cb;
+    }
+
+    setOnFeedbackError(cb?: (reason: string) => void): void {
+        this.deps.onFeedbackError = cb;
     }
 
     handleFeedbackRequest(mcpWs: WebSocket, req: { summary: string; project_directory?: string }): void {
@@ -56,7 +61,10 @@ export class FeedbackFlow {
                 images: resolved.images,
             });
         }).catch((err) => {
-            this.deps.sendError(mcpWs, err instanceof Error ? err : new Error('Feedback error'));
+            const reason = err instanceof Error ? err.message : 'Feedback error';
+            this.deps.log(`feedbackRequest failed: ${reason}`);
+            this.deps.sendError(mcpWs, err instanceof Error ? err : new Error(reason));
+            this.deps.onFeedbackError?.(reason);
         });
     }
 

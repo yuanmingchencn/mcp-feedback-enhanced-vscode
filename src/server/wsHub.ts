@@ -130,6 +130,10 @@ export class WsHub {
         this.feedbackFlow.setOnFeedbackResolved(cb);
     }
 
+    onFeedbackError(cb: (reason: string) => void): void {
+        this.feedbackFlow.setOnFeedbackError(cb);
+    }
+
     getPort(): number {
         return this.port;
     }

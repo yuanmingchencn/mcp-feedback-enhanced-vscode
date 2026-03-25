@@ -120,7 +120,9 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
                 return {
                     content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
                 };
-            } catch {
+            } catch (fallbackErr) {
+                const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+                deps.log(`[MCP Feedback] Browser fallback also failed: ${fallbackMsg}`);
                 return {
                     content: [{ type: 'text', text: `Error: ${errMsg}. Please try again.` }],
                     isError: true,
