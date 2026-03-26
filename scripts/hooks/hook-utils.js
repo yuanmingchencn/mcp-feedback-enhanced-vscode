@@ -117,13 +117,49 @@ function findServer(workspaceRoots) {
     } catch (e) { return null; }
 }
 
+var FEEDBACK_STATE_FILE = path.join(CONFIG_DIR, 'feedback-state.json');
+var ENFORCEMENT_CONFIG_FILE = path.join(CONFIG_DIR, 'enforcement-config.json');
+
+var DEFAULT_ENFORCEMENT = {
+    maxToolCalls: 15,
+    maxMinutes: 5,
+};
+
+function readFeedbackState() {
+    return readJSON(FEEDBACK_STATE_FILE) || {};
+}
+
+function writeFeedbackState(state) {
+    try {
+        fs.mkdirSync(CONFIG_DIR, { recursive: true });
+        fs.writeFileSync(FEEDBACK_STATE_FILE, JSON.stringify(state));
+    } catch (e) {
+        log('writeFeedbackState error: ' + e.message);
+    }
+}
+
+function readEnforcementConfig() {
+    var cfg = readJSON(ENFORCEMENT_CONFIG_FILE);
+    if (!cfg) return DEFAULT_ENFORCEMENT;
+    return {
+        maxToolCalls: cfg.maxToolCalls || DEFAULT_ENFORCEMENT.maxToolCalls,
+        maxMinutes: cfg.maxMinutes || DEFAULT_ENFORCEMENT.maxMinutes,
+    };
+}
+
 module.exports = {
     CONFIG_DIR,
     SERVERS_DIR,
+    FEEDBACK_STATE_FILE,
+    ENFORCEMENT_CONFIG_FILE,
+    DEFAULT_ENFORCEMENT,
     log,
     output,
     readJSON,
     readStdin,
     httpGet,
     findServer,
+    readFeedbackState,
+    writeFeedbackState,
+    readEnforcementConfig,
 };

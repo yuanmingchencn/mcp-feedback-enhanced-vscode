@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.4.0] - 2026-03-26
+
+### Silent Rules Refresh & Power Nap Warning
+
+- **Silent rules refresh**: The preToolUse hook periodically re-injects rules into the agent's context (after N tool calls or M minutes). The reminder is invisible to the agent — it simply refreshes the rules without exposing the enforcement mechanism, so agents call `interactive_feedback` naturally rather than out of fear of being blocked.
+- **Power Nap warning** (macOS): On activation, warns if Power Nap is enabled. When on, macOS periodically wakes during sleep — active agent sessions keep consuming API requests unattended. Offers a one-click disable option.
+- **Natural rules wording**: The `.mdc` rule now uses natural guidance instead of threats. Agents use their judgment on when to call `interactive_feedback`, with the hard rule being: always use it as the final action before ending a turn.
+- **Configurable**: Thresholds configurable via `~/.config/mcp-feedback-enhanced/enforcement-config.json` (`maxToolCalls`, `maxMinutes`).
+
 ## [2.3.3] - 2026-03-25
 
 ### Subagent Exclusion

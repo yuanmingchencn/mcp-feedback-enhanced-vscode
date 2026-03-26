@@ -89,7 +89,7 @@ describe('high-risk source contract baseline', () => {
             'mcp-server reminder marker missing'
         );
         assert.ok(
-            hookSrc.includes('interactive_feedback before ending your turn'),
+            hookSrc.includes('interactive_feedback'),
             'hook reminder marker missing'
         );
     });

@@ -153,6 +153,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<void> 
     deployCursorHooks(context.extensionPath);
     deployCursorRules();
     migratePendingFiles();
+    checkPowerNap();
 
     context.subscriptions.push(...disposables);
     // Port info available via showStatus command
@@ -238,7 +239,7 @@ function deployCursorHooks(extensionPath: string): void {
             }
         }
 
-        for (const old of ['check-pending.js', 'agent-stop.js', 'session-start.js']) {
+        for (const old of ['check-pending.js', 'agent-stop.js', 'session-start.js', 'enforce-feedback.js', 'track-feedback.js', 'compact-flag.js']) {
             try { fs.unlinkSync(path.join(targetDir, old)); } catch { /* already gone */ }
         }
 
@@ -278,7 +279,7 @@ function deployCursorHooks(extensionPath: string): void {
             });
         }
 
-        const RETIRED_HOOKS = ['stop', 'sessionStart'];
+        const RETIRED_HOOKS = ['stop', 'sessionStart', 'preCompact'];
         for (const event of RETIRED_HOOKS) {
             if (hooks[event]) {
                 hooks[event] = hooks[event].filter(h =>
@@ -304,9 +305,12 @@ const RULES_CONTENT = [
     '[MCP Feedback Enhanced] USAGE RULES:',
     'These rules apply ONLY to the main agent in Agent mode (direct user conversation).',
     'Do NOT call interactive_feedback if you are a subagent, or in Plan/Ask/Debug mode.',
-    '1. You MUST call interactive_feedback before ending your turn.',
-    '2. Only when the user explicitly confirms you can stop should you end. The decision to exit is ALWAYS the user\'s, never yours.',
-    '3. If you have completed your task, call interactive_feedback with a summary and ask the user for next steps.',
+    '',
+    'You have access to the interactive_feedback MCP tool for communicating with the user:',
+    '- Use it to present results, ask questions, or check in with the user.',
+    '- Use it as your final action before ending your turn.',
+    '- You do not need to call it between every tool call. Use your judgment during execution.',
+    '- User responses through feedback are free; each user message in Cursor costs a request.',
     '',
 ].join('\n');
 
@@ -350,4 +354,37 @@ function migratePendingFiles(): void {
         }
         try { fs.rmdirSync(pendingDir); } catch { /* ignore */ }
     } catch { /* ignore */ }
+}
+
+function checkPowerNap(): void {
+    if (process.platform !== 'darwin') return;
+
+    exec('pmset -g custom', { timeout: 5000 }, (err, stdout) => {
+        if (err || !stdout) return;
+        if (/powernap\s+1/i.test(stdout)) {
+            const isChinese = vscode.env.language.startsWith('zh');
+            const message = isChinese
+                ? 'Power Nap 已启用。如果 Cursor 中有未完成的 Agent 会话，'
+                    + '合盖后 macOS 仍会周期性唤醒，Agent 会继续执行并消耗 API 请求。'
+                    + '建议禁用 Power Nap，避免休眠期间的无效消耗。'
+                : 'Power Nap is enabled. If you have an active Cursor agent session, '
+                    + 'macOS will periodically wake during sleep and the agent will keep running, '
+                    + 'silently consuming API requests while your Mac is closed. '
+                    + 'Disable Power Nap to prevent unattended request usage.';
+            const disable = isChinese ? '禁用 Power Nap' : 'Disable Power Nap';
+            const learnMore = isChinese ? '了解更多' : 'Learn More';
+
+            vscode.window.showWarningMessage(message, disable, learnMore).then(choice => {
+                if (choice === disable) {
+                    const terminal = vscode.window.createTerminal('Disable Power Nap');
+                    terminal.sendText('sudo pmset -a powernap 0');
+                    terminal.show();
+                } else if (choice === learnMore) {
+                    vscode.env.openExternal(vscode.Uri.parse(
+                        'https://support.apple.com/en-us/102292'
+                    ));
+                }
+            });
+        }
+    });
 }
