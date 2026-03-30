@@ -17,6 +17,7 @@ import type {
 } from '../types';
 import {
     writeServer,
+    readServerByHash,
     deleteServerByHash,
     projectHash,
     cleanupStaleServers,
@@ -342,7 +343,21 @@ export class WsHub {
     private _startHeartbeat(): void {
         this.heartbeatTimer = setInterval(() => {
             this.clients.sweepStale(Date.now(), CLIENT_TIMEOUT, () => {});
+            this._ensureServerRegistration();
         }, HEARTBEAT_INTERVAL);
+    }
+
+    private _ensureServerRegistration(): void {
+        if (this.workspaces.length === 0 || this.port === 0) return;
+        for (const ws of this.workspaces) {
+            const hash = projectHash(ws);
+            const existing = readServerByHash(hash);
+            if (!existing || existing.port !== this.port || existing.pid !== process.pid) {
+                wsLog(`re-registering server for workspace: ${ws}`);
+                this._registerServer();
+                return;
+            }
+        }
     }
 
     // ── Transport ───────────────────────────────────────────
