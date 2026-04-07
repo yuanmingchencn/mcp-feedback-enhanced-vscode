@@ -1,11 +1,4 @@
 #!/usr/bin/env node
-/**
- * preToolUse hook for MCP Feedback Enhanced.
- *
- * 1. Consumes pending user messages — denies + injects feedback.
- * 2. Tracks tool calls since last interactive_feedback.
- * 3. Periodically re-injects rules into agent context (count/time thresholds).
- */
 
 const { log, output, readStdin, httpGet, findServer, readFeedbackState, writeFeedbackState, readEnforcementConfig } = require('./hook-utils');
 

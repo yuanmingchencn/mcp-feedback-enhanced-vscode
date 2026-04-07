@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { findExtensionServer } from './serverDiscovery.js';
 import { connectToExtension, requestFeedback } from './extensionClient.js';
 import { browserFallback } from './browserFallback.js';
+import { runPostFeedbackHooks } from './postFeedbackHooks.js';
 
 export const FEEDBACK_REMINDER = '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
 
@@ -100,6 +101,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
                             });
                         }
                     }
+                    runPostFeedbackHooks({ summary, feedback: result.feedback });
                     return { content };
                 } finally {
                     ws.close();
@@ -108,6 +110,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
 
             deps.log('[MCP Feedback] No extension found, using browser fallback');
             const feedback = await deps.browserFallback(summary);
+            runPostFeedbackHooks({ summary, feedback });
             return {
                 content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
             };
@@ -117,6 +120,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
 
             try {
                 const feedback = await deps.browserFallback(summary);
+                runPostFeedbackHooks({ summary, feedback });
                 return {
                     content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
                 };

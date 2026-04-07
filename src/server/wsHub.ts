@@ -342,7 +342,7 @@ export class WsHub {
 
     private _startHeartbeat(): void {
         this.heartbeatTimer = setInterval(() => {
-            this.clients.sweepStale(Date.now(), CLIENT_TIMEOUT, () => {});
+            this.clients.sweepStale(Date.now(), CLIENT_TIMEOUT, () => { });
             this._ensureServerRegistration();
         }, HEARTBEAT_INTERVAL);
     }

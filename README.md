@@ -73,6 +73,16 @@ Override defaults via `~/.config/mcp-feedback-enhanced/enforcement-config.json` 
 └── logs/hooks.log                   # Hook debug log
 ```
 
+## Optional Integrations
+
+### DeepMem — Persistent AI Memory
+
+[DeepMem](https://github.com/nicobailon/deepmem) gives your AI persistent memory across sessions and IDEs. When paired with MCP Feedback Enhanced, noteworthy interactions are automatically distilled and stored as memories.
+
+**How it works:** After every `interactive_feedback` call, a post-feedback hook buffers the interaction. Every 5 non-trivial interactions, an LLM extracts decisions, preferences, gotchas, and patterns, then stores them in the running DeepMem daemon via HTTP.
+
+**Requirements:** DeepMem daemon running (`bun run start` or `deepmem start`) with `~/.deepmem/daemon.json` present. Optional: `~/.deepmem/deepmem.yaml` with `completion.apiUrl` / `completion.apiKey` / `completion.model` for LLM distillation.
+
 ## Troubleshooting
 
 - **"Connecting..."**: Reload the window (`Cmd+R` / `Ctrl+R`).

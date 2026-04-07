@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- **Stricter deployed `.mdc` rules**: `RULES_CONTENT` now states an explicit **HARD GATE** — the agent must not treat the turn as complete without an `interactive_feedback` call; that call must be the **last tool** when wrapping up. Redeploys to `~/.cursor/rules/mcp-feedback-enhanced.mdc` on next extension activation (file is rewritten when content differs).
+
 ## [2.4.0] - 2026-03-26
 
 ### Silent Rules Refresh & Power Nap Warning

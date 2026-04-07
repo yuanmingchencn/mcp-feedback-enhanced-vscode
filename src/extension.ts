@@ -306,11 +306,18 @@ const RULES_CONTENT = [
     'These rules apply ONLY to the main agent in Agent mode (direct user conversation).',
     'Do NOT call interactive_feedback if you are a subagent, or in Plan/Ask/Debug mode.',
     '',
+    'WHY: User responses through feedback are FREE, but each user message in Cursor costs a request.',
+    'Always prefer feedback over ending your turn with plain text alone.',
+    '',
+    'HARD GATE — turn completion:',
+    '- If you are about to end your turn and you have NOT called interactive_feedback in this turn, you are NOT done. Call it first.',
+    '- MUST use interactive_feedback as your LAST tool call when wrapping up (hand off, summarize, or ask the user).',
+    '- NEVER end your turn with only assistant-visible text and zero interactive_feedback call in that turn.',
+    '',
     'You have access to the interactive_feedback MCP tool for communicating with the user:',
     '- Use it to present results, ask questions, or check in with the user.',
-    '- Use it as your final action before ending your turn.',
-    '- You do not need to call it between every tool call. Use your judgment during execution.',
-    '- User responses through feedback are free; each user message in Cursor costs a request.',
+    '- You do not need to call it between every tool call during multi-step execution.',
+    '- When blocked, uncertain, or facing a decision with trade-offs, call feedback immediately to ask the user — do NOT guess or make assumptions on your own.',
     '',
 ].join('\n');
 
@@ -365,12 +372,12 @@ function checkPowerNap(): void {
             const isChinese = vscode.env.language.startsWith('zh');
             const message = isChinese
                 ? 'Power Nap 已启用。如果 Cursor 中有未完成的 Agent 会话，'
-                    + '合盖后 macOS 仍会周期性唤醒，Agent 会继续执行并消耗 API 请求。'
-                    + '建议禁用 Power Nap，避免休眠期间的无效消耗。'
+                + '合盖后 macOS 仍会周期性唤醒，Agent 会继续执行并消耗 API 请求。'
+                + '建议禁用 Power Nap，避免休眠期间的无效消耗。'
                 : 'Power Nap is enabled. If you have an active Cursor agent session, '
-                    + 'macOS will periodically wake during sleep and the agent will keep running, '
-                    + 'silently consuming API requests while your Mac is closed. '
-                    + 'Disable Power Nap to prevent unattended request usage.';
+                + 'macOS will periodically wake during sleep and the agent will keep running, '
+                + 'silently consuming API requests while your Mac is closed. '
+                + 'Disable Power Nap to prevent unattended request usage.';
             const disable = isChinese ? '禁用 Power Nap' : 'Disable Power Nap';
             const learnMore = isChinese ? '了解更多' : 'Learn More';
 
@@ -388,3 +395,4 @@ function checkPowerNap(): void {
         }
     });
 }
+
