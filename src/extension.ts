@@ -13,7 +13,7 @@ import * as vscode from 'vscode';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { FeedbackWSServer } from './wsServer';
 import { FeedbackViewProvider } from './feedbackViewProvider';
 
@@ -44,6 +44,21 @@ function cancelFeedbackReminders(): void {
 
 function getWorkspaces(): string[] {
     return (vscode.workspace.workspaceFolders || []).map(f => f.uri.fsPath);
+}
+
+/** Resolve `node` for configs spawned by Cursor (hooks, MCP) — same PATH caveats as shell `which`. */
+function resolveNodeBin(): string {
+    try {
+        if (process.platform === 'win32') {
+            const out = execSync('where.exe node', { encoding: 'utf-8', timeout: 5000, env: process.env });
+            const first = out.split(/\r?\n/).map(l => l.trim()).find(Boolean);
+            if (first) { return first; }
+        } else {
+            const resolved = execSync('which node', { encoding: 'utf-8', timeout: 5000, env: process.env }).trim();
+            if (resolved) { return resolved; }
+        }
+    } catch { /* fall through */ }
+    return 'node';
 }
 
 function _loadWebviewHtml(extensionPath: string, serverPort: number): string {
@@ -201,7 +216,7 @@ function ensureMcpConfig(extensionPath: string): void {
 
         const mcpServers = (config.mcpServers || {}) as Record<string, unknown>;
         const localServerPath = path.join(extensionPath, 'mcp-server', 'dist', 'index.js');
-        const expectedCommand = 'node';
+        const expectedCommand = resolveNodeBin();
         const expectedArgs = [localServerPath];
 
         const existing = mcpServers['mcp-feedback-enhanced'] as Record<string, unknown> | undefined;
@@ -257,13 +272,7 @@ function deployCursorHooks(extensionPath: string): void {
         const SOURCE_TAG = 'mcp-feedback-enhanced';
         const LEGACY_TAGS = ['mcp-feedback-v2'];
 
-        let nodeBin = 'node';
-        try {
-            const resolved = require('child_process')
-                .execSync('which node', { encoding: 'utf-8', timeout: 5000, env: process.env })
-                .trim();
-            if (resolved) { nodeBin = resolved; }
-        } catch { /* keep bare 'node' as fallback */ }
+        const nodeBin = resolveNodeBin();
         const hookEntries: Record<string, Record<string, unknown>> = {
             preToolUse: { command: `${nodeBin} ${preToolUseHook}` },
         };
