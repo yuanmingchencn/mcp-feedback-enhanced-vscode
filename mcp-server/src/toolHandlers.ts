@@ -1,11 +1,49 @@
 import * as os from 'node:os';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { z } from 'zod';
 import { findExtensionServer } from './serverDiscovery.js';
 import { connectToExtension, requestFeedback } from './extensionClient.js';
 import { browserFallback } from './browserFallback.js';
 import { runPostFeedbackHooks } from './postFeedbackHooks.js';
 
-export const FEEDBACK_REMINDER = '\n\n<!-- Please follow mcp-feedback-enhanced instructions. -->';
+export const FEEDBACK_REMINDER = '\n\n<!-- Read through all your active rules now. For each rule, check: am I following it? If you have forgotten any, Read ~/.cursor/rules/ before continuing. -->';
+
+const INSTRUCTIONS_DIR = path.join(os.homedir(), '.config', 'mcp-feedback-enhanced', 'instructions');
+
+let _instructionsCache: string = '';
+let _instructionsCacheExpiry = 0;
+
+function loadRegisteredInstructions(): string {
+    if (Date.now() < _instructionsCacheExpiry) return _instructionsCache;
+    try {
+        if (!fs.existsSync(INSTRUCTIONS_DIR)) {
+            _instructionsCache = '';
+            _instructionsCacheExpiry = Date.now() + 30_000;
+            return '';
+        }
+        const files = fs.readdirSync(INSTRUCTIONS_DIR)
+            .filter(f => f.endsWith('.md') || f.endsWith('.txt'));
+        _instructionsCache = files
+            .map(f => {
+                try {
+                    return fs.readFileSync(path.join(INSTRUCTIONS_DIR, f), 'utf8').trim();
+                } catch { return ''; }
+            })
+            .filter(Boolean)
+            .map(inst => `\n<!-- ${inst} -->`)
+            .join('');
+        _instructionsCacheExpiry = Date.now() + 60_000;
+    } catch {
+        _instructionsCache = '';
+        _instructionsCacheExpiry = Date.now() + 30_000;
+    }
+    return _instructionsCache;
+}
+
+function feedbackSuffix(): string {
+    return FEEDBACK_REMINDER + loadRegisteredInstructions();
+}
 
 type ToolContent = Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 
@@ -80,7 +118,8 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
             project_directory: z.string().optional(),
         }).parse(args);
 
-        const { summary, project_directory } = parsed;
+        const summary = parsed.summary.replace(/\s*\[preflight:done\]\s*/g, '').trim();
+        const { project_directory } = parsed;
 
         try {
             const extensionServer = await deps.findExtensionServer(project_directory);
@@ -90,7 +129,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
                 try {
                     const result = await deps.requestFeedback(ws, summary, project_directory);
                     const content: ToolContent = [
-                        { type: 'text', text: result.feedback + FEEDBACK_REMINDER },
+                        { type: 'text', text: result.feedback + feedbackSuffix() },
                     ];
                     if (result.images) {
                         for (const img of result.images) {
@@ -112,7 +151,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
             const feedback = await deps.browserFallback(summary);
             runPostFeedbackHooks({ summary, feedback });
             return {
-                content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
+                content: [{ type: 'text', text: feedback + feedbackSuffix() }],
             };
         } catch (err) {
             const errMsg = err instanceof Error ? err.message : String(err);
@@ -122,7 +161,7 @@ export function createToolCallHandler(deps: ToolHandlerDeps) {
                 const feedback = await deps.browserFallback(summary);
                 runPostFeedbackHooks({ summary, feedback });
                 return {
-                    content: [{ type: 'text', text: feedback + FEEDBACK_REMINDER }],
+                    content: [{ type: 'text', text: feedback + feedbackSuffix() }],
                 };
             } catch (fallbackErr) {
                 const fallbackMsg = fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);

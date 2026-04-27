@@ -14,9 +14,9 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { buildToolDefinitions, handleToolCall } from './toolHandlers.js';
 import { registerPostFeedbackHook } from './postFeedbackHooks.js';
-import { deepmemHook } from './hooks/deepmem.js';
 
-registerPostFeedbackHook(deepmemHook);
+import { memosHook } from './hooks/memos.js';
+registerPostFeedbackHook(memosHook);
 
 // ─── MCP Server Setup ─────────────────────────────────────
 
